@@ -182,20 +182,12 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 									Value: fmt.Sprintf("%s-operator", cr.Name),
 								},
 								{
-									Name:  "AQUA_NETWORK_CONTROL",
-									Value: "1",
-								},
-								{
 									Name:  "RESTART_CONTAINERS",
 									Value: "no",
 								},
 								{
 									Name:  "SENDING_HOST_IMAGES_DISABLED",
 									Value: strconv.FormatBool(cr.Spec.SendingHostImages),
-								},
-								{
-									Name:  "AQUA_RUNC_INTERCEPTION",
-									Value: enf.Parameters.RuncInterception,
 								},
 							},
 						},
