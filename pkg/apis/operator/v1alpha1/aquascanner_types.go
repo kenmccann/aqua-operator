@@ -8,13 +8,11 @@ import (
 
 // AquaScannerSpec defines the desired state of AquaScanner
 type AquaScannerSpec struct {
-	Requirements       bool                `json:"requirements,required"`
-	ServiceAccountName string              `json:"serviceAccount,omitempty"`
-	RegistryData       *AquaDockerRegistry `json:"registry,omitempty"`
+	Infrastructure *AquaInfrastructure `json:"infra"`
+	Common         *AquaCommon         `json:"common"`
 
 	ScannerService *AquaService `json:"deploy,required"`
 	Login          *AquaLogin   `json:"login,required"`
-	Openshift      bool         `json:"openshift,omitempty"`
 }
 
 // AquaScannerStatus defines the observed state of AquaScanner

@@ -1,12 +1,3 @@
-# First Steps Process
-
-- [First Steps Process](#first-steps-process)
-  - [Kubernetes](#kubernetes)
-    - [Requirments (Optional)](#requirments-optional)
-  - [Openshift](#openshift)
-    - [Requirments](#requirments)
-  - [Deployments (Openshift and Kubernetes)](#deployments-openshift-and-kubernetes)
-
 ## Kubernetes
 
 Support only Kubernetes 1.11+
@@ -64,12 +55,3 @@ oc create secret docker-registry aqua-registry-secret --docker-server=registry.a
 oc create secret generic aqua-database-password --from-literal=db-password=123456 -n aqua
 oc secrets add aqua-sa aqua-registry-secret --for=pull -n aqua
 ```
-
-## Deployments (Openshift and Kubernetes)
-Aqua deployments types:
-- [Aqua CSP](docs/AquaCsp.md) - **recommended**!
-- [Aqua Server](docs/AquaServer.md)
-- [Aqua Gateway](docs/AquaGateway.md)
-- [Aqua Database](docs/AquaDatabase.md) - **Not For Production Environment - Please Use External DB with PosttreSQL Operator**
-- [Aqua Enforcer](docs/AquaEnforcer.md)
-- [Aqua Scanner CLI](docs/AquaScanner.md)

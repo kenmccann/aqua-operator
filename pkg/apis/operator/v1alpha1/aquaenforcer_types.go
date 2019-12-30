@@ -8,17 +8,13 @@ import (
 
 // AquaEnforcerSpec defines the desired state of AquaEnforcer
 type AquaEnforcerSpec struct {
-	Requirements       bool                `json:"requirements,required"`
-	ServiceAccountName string              `json:"serviceAccount,omitempty"`
-	RegistryData       *AquaDockerRegistry `json:"registry,omitempty"`
+	Infrastructure *AquaInfrastructure `json:"infra"`
+	Common         *AquaCommon         `json:"common"`
 
-	Token           string            `json:"token,required"`
-	Rbac            *AquaRbacSettings `json:"rbac,required"`
-	EnforcerService *AquaService      `json:"deploy,required"`
-
-	Gateway           *AquaGatewayInformation `json:"gateway,omitempty"`
-	SendingHostImages bool                    `json:"sendingHostImages,omitempty"`
-	RuncInterception  bool                    `json:"runcInterception,omitempty"`
+	EnforcerService *AquaService            `json:"deploy,required"`
+	Gateway         *AquaGatewayInformation `json:"gateway,required"`
+	Token           string                  `json:"token,required"`
+	Secret          *AquaSecret             `json:"secret,required"`
 }
 
 // AquaEnforcerStatus defines the observed state of AquaEnforcer

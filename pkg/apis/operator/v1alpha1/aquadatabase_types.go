@@ -8,14 +8,10 @@ import (
 
 // AquaDatabaseSpec defines the desired state of AquaDatabase
 type AquaDatabaseSpec struct {
-	Requirements       bool                `json:"requirements,required"`
-	ServiceAccountName string              `json:"serviceAccount,omitempty"`
-	DbSecretName       string              `json:"dbSecretName,omitempty"`
-	DbSecretKey        string              `json:"dbSecretKey,omitempty"`
-	RegistryData       *AquaDockerRegistry `json:"registry,omitempty"`
-
-	DbService *AquaService `json:"deploy,required"`
-	Openshift bool         `json:"openshift,omitempty"`
+	Infrastructure *AquaInfrastructure `json:"infra"`
+	Common         *AquaCommon         `json:"common"`
+	DbService      *AquaService        `json:"deploy,required"`
+	DiskSize       int                 `json:"diskSize,required"`
 }
 
 // AquaDatabaseStatus defines the observed state of AquaDatabase

@@ -9,3 +9,4 @@ kubectl delete -f deploy/service_account.yaml -n aqua
 kubectl delete -f deploy/role.yaml
 kubectl delete -f deploy/role_binding.yaml
 kubectl delete -f deploy/operator.yaml -n aqua
+kubectl delete ns aqua

@@ -8,19 +8,11 @@ import (
 
 // AquaGatewaySpec defines the desired state of AquaGateway
 type AquaGatewaySpec struct {
-	Requirements       bool                `json:"requirements,required"`
-	ServiceAccountName string              `json:"serviceAccount,omitempty"`
-	DbSecretName       string              `json:"dbSecretName,omitempty"`
-	DbSecretKey        string              `json:"dbSecretKey,omitempty"`
-	RegistryData       *AquaDockerRegistry `json:"registry,omitempty"`
+	Infrastructure *AquaInfrastructure `json:"infra"`
+	Common         *AquaCommon         `json:"common"`
 
-	GatewayService *AquaService `json:"deploy,required"`
-
-	ExternalDb       *AquaDatabaseInformation `json:"externalDb,omitempty"`
-	DbDeploymentName string                   `json:"aquaDb,omitempty"`
-	DbSsl            bool                     `json:"ssl,omitempty"`
-	DbAuditSsl       bool                     `json:"auditSsl,omitempty"`
-	Openshift        bool                     `json:"openshift,omitempty"`
+	GatewayService *AquaService             `json:"deploy,required"`
+	ExternalDb     *AquaDatabaseInformation `json:"externalDb,omitempty"`
 }
 
 // AquaGatewayStatus defines the observed state of AquaGateway

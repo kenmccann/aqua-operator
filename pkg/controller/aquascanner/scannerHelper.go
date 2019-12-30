@@ -4,16 +4,15 @@ import (
 	"fmt"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
-	"github.com/niso120b/aqua-operator/pkg/controller/common"
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	"github.com/niso120b/aqua-operator/pkg/utils/extra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type ScannerParameters struct {
-	AquaScannerDeploymentName     string
-	AquaScannerServiceAccountName string
-	AquaScannerImage              operatorv1alpha1.AquaImage
+	Scanner *operatorv1alpha1.AquaScanner
 }
 
 type AquaScannerHelper struct {
@@ -22,15 +21,7 @@ type AquaScannerHelper struct {
 
 func newAquaScannerHelper(cr *operatorv1alpha1.AquaScanner) *AquaScannerHelper {
 	params := ScannerParameters{
-		AquaScannerDeploymentName:     fmt.Sprintf("%s-scanner", cr.Name),
-		AquaScannerServiceAccountName: fmt.Sprintf("%s-sa", cr.Name),
-		AquaScannerImage:              *cr.Spec.ScannerService.ImageData,
-	}
-
-	if !cr.Spec.Requirements {
-		if len(cr.Spec.ServiceAccountName) > 0 {
-			params.AquaScannerServiceAccountName = cr.Spec.ServiceAccountName
-		}
+		Scanner: cr,
 	}
 
 	return &AquaScannerHelper{
@@ -39,6 +30,8 @@ func newAquaScannerHelper(cr *operatorv1alpha1.AquaScanner) *AquaScannerHelper {
 }
 
 func (as *AquaScannerHelper) newDeployment(cr *operatorv1alpha1.AquaScanner) *appsv1.Deployment {
+	pullPolicy, registry, repository, tag := extra.GetImageData("scanner", cr.Spec.Infrastructure.Version, cr.Spec.ScannerService.ImageData)
+
 	labels := map[string]string{
 		"app":                cr.Name + "-scanner",
 		"deployedby":         "aqua-operator",
@@ -54,28 +47,28 @@ func (as *AquaScannerHelper) newDeployment(cr *operatorv1alpha1.AquaScanner) *ap
 			Kind:       "Deployment",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        as.Parameters.AquaScannerDeploymentName,
+			Name:        fmt.Sprintf(consts.ScannerDeployName, cr.Name),
 			Namespace:   cr.Namespace,
 			Labels:      labels,
 			Annotations: annotations,
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: common.Int32Ptr(int32(cr.Spec.ScannerService.Replicas)),
+			Replicas: extra.Int32Ptr(int32(cr.Spec.ScannerService.Replicas)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
-					Name:   as.Parameters.AquaScannerDeploymentName,
+					Name:   fmt.Sprintf(consts.ScannerDeployName, cr.Name),
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: as.Parameters.AquaScannerServiceAccountName,
+					ServiceAccountName: cr.Spec.Infrastructure.ServiceAccount,
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-scanner",
-							Image:           fmt.Sprintf("%s/%s:%s", as.Parameters.AquaScannerImage.Registry, as.Parameters.AquaScannerImage.Repository, as.Parameters.AquaScannerImage.Tag),
-							ImagePullPolicy: corev1.PullPolicy(as.Parameters.AquaScannerImage.PullPolicy),
+							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Args: []string{
 								"daemon",
 								"--user",
@@ -143,9 +136,11 @@ func (as *AquaScannerHelper) newDeployment(cr *operatorv1alpha1.AquaScanner) *ap
 		}
 	}
 
-	if cr.Spec.Openshift {
-		deployment.Spec.Template.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
-			Privileged: &cr.Spec.Openshift,
+	if len(cr.Spec.Common.ImagePullSecret) != 0 {
+		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+			corev1.LocalObjectReference{
+				Name: cr.Spec.Common.ImagePullSecret,
+			},
 		}
 	}
 
@@ -160,22 +155,6 @@ func (as *AquaScannerHelper) getEnvVars(cr *operatorv1alpha1.AquaScanner) []core
 			Value: cr.Spec.Login.Password,
 		},
 	}
-
-	/*if len(cr.Spec.Login.PasswordSecretName) != 0 && len(cr.Spec.Login.PasswordSecretKey) != 0 {
-		result = []corev1.EnvVar{
-			{
-				Name: "SCANNER_PASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: cr.Spec.Login.PasswordSecretName,
-						},
-						Key: cr.Spec.Login.PasswordSecretKey,
-					},
-				},
-			},
-		}
-	}*/
 
 	return result
 }

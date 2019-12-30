@@ -3,8 +3,13 @@ package aquagateway
 import (
 	"fmt"
 
-	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
 	"github.com/niso120b/aqua-operator/pkg/controller/common"
+
+	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	"github.com/niso120b/aqua-operator/pkg/utils/extra"
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/services"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,16 +17,7 @@ import (
 )
 
 type GatewayParameters struct {
-	AquaGatewayDeploymentName string
-	AquaGatewayServiceName    string
-	AquaDbInternal            bool
-	AquaGatewayImage          operatorv1alpha1.AquaImage
-	AquaDbExteralData         operatorv1alpha1.AquaDatabaseInformation
-	AquaServiceAccount        string
-	AquaDbSecretName          string
-	AquaDbSecretKey           string
-	AquaDbName                string
-	AquaGatewayServiceType    string
+	Gateway *operatorv1alpha1.AquaGateway
 }
 
 type AquaGatewayHelper struct {
@@ -30,48 +26,7 @@ type AquaGatewayHelper struct {
 
 func newAquaGatewayHelper(cr *operatorv1alpha1.AquaGateway) *AquaGatewayHelper {
 	params := GatewayParameters{
-		AquaGatewayDeploymentName: fmt.Sprintf("%s-gateway", cr.Name),
-		AquaGatewayServiceName:    fmt.Sprintf("%s-gateway-svc", cr.Name),
-		AquaDbInternal:            true,
-		AquaGatewayImage:          *cr.Spec.GatewayService.ImageData,
-		AquaDbName:                cr.Spec.DbDeploymentName,
-		AquaGatewayServiceType:    "ClusterIP",
-	}
-
-	if len(params.AquaDbName) == 0 {
-		params.AquaDbName = "aqua"
-	}
-
-	if !cr.Spec.Requirements {
-		params.AquaServiceAccount = cr.Spec.ServiceAccountName
-		params.AquaDbSecretName = cr.Spec.DbSecretName
-		params.AquaDbSecretKey = cr.Spec.DbSecretKey
-	} else {
-		params.AquaServiceAccount = fmt.Sprintf("%s-sa", cr.Name)
-		params.AquaDbSecretName = fmt.Sprintf("%s-database-password", cr.Name)
-		params.AquaDbSecretKey = "db-password"
-	}
-
-	if cr.Spec.ExternalDb != nil {
-		params.AquaDbInternal = false
-		params.AquaDbExteralData = *cr.Spec.ExternalDb
-	} else {
-		params.AquaDbExteralData = operatorv1alpha1.AquaDatabaseInformation{
-			Name:          "scalock",
-			Host:          fmt.Sprintf("%s-database-svc", params.AquaDbName),
-			Port:          5432,
-			Username:      "postgres",
-			Password:      "password",
-			AuditName:     "slk_audit",
-			AuditHost:     fmt.Sprintf("%s-database-svc", params.AquaDbName),
-			AuditPort:     5432,
-			AuditUsername: "postgres",
-			AuditPassword: "password",
-		}
-	}
-
-	if len(cr.Spec.GatewayService.ServiceType) > 0 {
-		params.AquaGatewayServiceType = cr.Spec.GatewayService.ServiceType
+		Gateway: cr,
 	}
 
 	return &AquaGatewayHelper{
@@ -80,11 +35,13 @@ func newAquaGatewayHelper(cr *operatorv1alpha1.AquaGateway) *AquaGatewayHelper {
 }
 
 func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *appsv1.Deployment {
+	pullPolicy, registry, repository, tag := extra.GetImageData("gateway", cr.Spec.Infrastructure.Version, cr.Spec.GatewayService.ImageData)
+
 	labels := map[string]string{
 		"app":                cr.Name + "-gateway",
 		"deployedby":         "aqua-operator",
 		"aquasecoperator_cr": cr.Name,
-		"type":               "aqua-gateways",
+		"type":               "aqua-gateway",
 	}
 	annotations := map[string]string{
 		"description": "Deploy the aqua gateway server",
@@ -96,13 +53,13 @@ func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *ap
 			Kind:       "Deployment",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        gw.Parameters.AquaGatewayDeploymentName,
+			Name:        fmt.Sprintf(consts.GatewayDeployName, cr.Name),
 			Namespace:   cr.Namespace,
 			Labels:      labels,
 			Annotations: annotations,
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: common.Int32Ptr(int32(cr.Spec.GatewayService.Replicas)),
+			Replicas: extra.Int32Ptr(int32(cr.Spec.GatewayService.Replicas)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},
@@ -111,12 +68,12 @@ func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *ap
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: fmt.Sprintf("%s-sa", cr.Name),
+					ServiceAccountName: cr.Spec.Infrastructure.ServiceAccount,
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-gateway",
-							Image:           fmt.Sprintf("%s/%s:%s", gw.Parameters.AquaGatewayImage.Registry, gw.Parameters.AquaGatewayImage.Repository, gw.Parameters.AquaGatewayImage.Tag),
-							ImagePullPolicy: corev1.PullPolicy(gw.Parameters.AquaGatewayImage.PullPolicy),
+							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Ports: []corev1.ContainerPort{
 								{
 									Protocol:      corev1.ProtocolTCP,
@@ -159,9 +116,11 @@ func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *ap
 		}
 	}
 
-	if cr.Spec.Openshift {
-		deployment.Spec.Template.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
-			Privileged: &cr.Spec.Openshift,
+	if len(cr.Spec.Common.ImagePullSecret) != 0 {
+		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+			corev1.LocalObjectReference{
+				Name: cr.Spec.Common.ImagePullSecret,
+			},
 		}
 	}
 
@@ -169,157 +128,53 @@ func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *ap
 }
 
 func (gw *AquaGatewayHelper) getEnvVars(cr *operatorv1alpha1.AquaGateway) []corev1.EnvVar {
-	result := []corev1.EnvVar{
-		{
-			Name:  "SCALOCK_GATEWAY_PUBLIC_IP",
-			Value: gw.Parameters.AquaGatewayServiceName,
-		},
-		{
-			Name:  "SCALOCK_DBUSER",
-			Value: gw.Parameters.AquaDbExteralData.Username,
-		},
-		{
-			Name:  "SCALOCK_DBNAME",
-			Value: gw.Parameters.AquaDbExteralData.Name,
-		},
-		{
-			Name:  "SCALOCK_DBHOST",
-			Value: gw.Parameters.AquaDbExteralData.Host,
-		},
-		{
-			Name:  "SCALOCK_DBPORT",
-			Value: fmt.Sprintf("%d", gw.Parameters.AquaDbExteralData.Port),
-		},
-		{
-			Name:  "SCALOCK_AUDIT_DBUSER",
-			Value: gw.Parameters.AquaDbExteralData.AuditUsername,
-		},
-		{
-			Name:  "SCALOCK_AUDIT_DBNAME",
-			Value: gw.Parameters.AquaDbExteralData.AuditName,
-		},
-		{
-			Name:  "SCALOCK_AUDIT_DBHOST",
-			Value: gw.Parameters.AquaDbExteralData.AuditHost,
-		},
-		{
-			Name:  "SCALOCK_AUDIT_DBPORT",
-			Value: fmt.Sprintf("%d", gw.Parameters.AquaDbExteralData.AuditPort),
-		},
-		{
-			Name:  "SCALOCK_LOG_LEVEL",
-			Value: "DEBUG",
-		},
-		{
-			Name:  "HEALTH_MONITOR",
-			Value: "0.0.0.0:8082",
-		},
-	}
+	envsHelper := common.NewAquaEnvsHelper(cr.Spec.Infrastructure, cr.Spec.Common, cr.Spec.ExternalDb, cr.Name)
+	result, _ := envsHelper.GetDbEnvVars()
 
-	if !gw.Parameters.AquaDbInternal {
-		scalock_password := corev1.EnvVar{
-			Name:  "SCALOCK_DBPASSWORD",
-			Value: gw.Parameters.AquaDbExteralData.Password,
-		}
+	result = append(result, corev1.EnvVar{
+		Name:  "HEALTH_MONITOR",
+		Value: "0.0.0.0:8082",
+	})
 
-		if len(cr.Spec.ExternalDb.PasswordSecretName) != 0 {
-			scalock_password = corev1.EnvVar{
-				Name: "SCALOCK_DBPASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: cr.Spec.ExternalDb.PasswordSecretName,
-						},
-						Key: cr.Spec.ExternalDb.PasswordSecretKey,
-					},
-				},
-			}
-		}
+	result = append(result, corev1.EnvVar{
+		Name:  "AQUA_CONSOLE_SECURE_ADDRESS",
+		Value: fmt.Sprintf("%s:443", fmt.Sprintf(consts.ServerServiceName, cr.Name)),
+	})
 
-		scalock_audit_password := corev1.EnvVar{
-			Name:  "SCALOCK_AUDIT_DBPASSWORD",
-			Value: gw.Parameters.AquaDbExteralData.AuditPassword,
-		}
-
-		if len(cr.Spec.ExternalDb.AuditPasswordSecretName) != 0 {
-			scalock_audit_password = corev1.EnvVar{
-				Name: "SCALOCK_AUDIT_DBPASSWORD",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: cr.Spec.ExternalDb.AuditPasswordSecretName,
-						},
-						Key: cr.Spec.ExternalDb.AuditPasswordSecretKey,
-					},
-				},
-			}
-		}
-
-		result = append(result, scalock_password, scalock_audit_password)
-	} else {
-		scalock_password := corev1.EnvVar{
-			Name: "SCALOCK_DBPASSWORD",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: gw.Parameters.AquaDbSecretName,
-					},
-					Key: gw.Parameters.AquaDbSecretKey,
-				},
-			},
-		}
-		scalock_audit_password := corev1.EnvVar{
-			Name: "SCALOCK_AUDIT_DBPASSWORD",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: gw.Parameters.AquaDbSecretName,
-					},
-					Key: gw.Parameters.AquaDbSecretKey,
-				},
-			},
-		}
-
-		result = append(result, scalock_password, scalock_audit_password)
-	}
+	result = append(result, corev1.EnvVar{
+		Name:  "SCALOCK_GATEWAY_PUBLIC_IP",
+		Value: fmt.Sprintf(consts.GatewayServiceName, cr.Name),
+	})
 
 	return result
 }
 
 func (gw *AquaGatewayHelper) newService(cr *operatorv1alpha1.AquaGateway) *corev1.Service {
-	labels := map[string]string{
-		"app":                cr.Name + "-gateway",
-		"deployedby":         "aqua-operator",
-		"aquasecoperator_cr": cr.Name,
-	}
-	annotations := map[string]string{
-		"description": "Deploy the aqua gateway server",
-	}
 	selectors := map[string]string{
-		"type": "aqua-gateways",
+		"app": fmt.Sprintf("%s-gateway", cr.Name),
 	}
-	service := &corev1.Service{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "core/v1",
-			Kind:       "Service",
+
+	ports := []corev1.ServicePort{
+		{
+			Port:       3622,
+			TargetPort: intstr.FromInt(3622),
+			Name:       "aqua-gate",
 		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        gw.Parameters.AquaGatewayServiceName,
-			Namespace:   cr.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceType(gw.Parameters.AquaGatewayServiceType),
-			Selector: selectors,
-			Ports: []corev1.ServicePort{
-				{
-					Port:       3622,
-					TargetPort: intstr.FromInt(3622),
-				},
-			},
+		{
+			Port:       8443,
+			TargetPort: intstr.FromInt(8443),
+			Name:       "aqua-gate-ssl",
 		},
 	}
+
+	service := services.CreateService(cr.Name,
+		cr.Namespace,
+		fmt.Sprintf(consts.GatewayServiceName, cr.Name),
+		fmt.Sprintf("%s-gateway", cr.Name),
+		"Service for aqua gateway components",
+		cr.Spec.GatewayService.ServiceType,
+		selectors,
+		ports)
 
 	return service
 }

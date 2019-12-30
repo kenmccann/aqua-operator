@@ -3,9 +3,12 @@ package aquagateway
 import (
 	"context"
 	"reflect"
+	"time"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
 	"github.com/niso120b/aqua-operator/pkg/controller/common"
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -124,42 +127,19 @@ func (r *ReconcileAquaGateway) Reconcile(request reconcile.Request) (reconcile.R
 		return reconcile.Result{}, err
 	}
 
-	if instance.Spec.Requirements {
-		reqLogger.Info("Start Setup Requirment For Aqua Gateway")
-
-		if len(instance.Spec.RegistryData.ImagePullSecretName) == 0 {
-			_, err = r.CreateImagePullSecret(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-		}
-
-		_, err = r.CreateAquaServiceAccount(instance)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		reqLogger.Info("Start Setup Secret For Database Password")
-		_, err = r.CreateDbPasswordSecret(instance)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-	}
+	instance = r.updateGatewayObject(instance)
 
 	if instance.Spec.GatewayService != nil {
-		if instance.Spec.GatewayService.ImageData != nil {
-			reqLogger.Info("Start Setup Aqua Gateway")
-			_, err = r.InstallGatewayService(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-
-			_, err = r.InstallGatewayDeployment(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
+		reqLogger.Info("Start Setup Aqua Gateway")
+		_, err = r.InstallGatewayService(instance)
+		if err != nil {
+			return reconcile.Result{}, err
 		}
 
+		_, err = r.InstallGatewayDeployment(instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 	}
 
 	if !reflect.DeepEqual(operatorv1alpha1.AquaDeploymentStateRunning, instance.Status.State) {
@@ -168,6 +148,13 @@ func (r *ReconcileAquaGateway) Reconcile(request reconcile.Request) (reconcile.R
 	}
 
 	return reconcile.Result{Requeue: true}, nil
+}
+
+func (r *ReconcileAquaGateway) updateGatewayObject(cr *operatorv1alpha1.AquaGateway) *operatorv1alpha1.AquaGateway {
+	cr.Spec.Infrastructure = common.UpdateAquaInfrastructure(cr.Spec.Infrastructure, cr.Name, cr.Namespace)
+	cr.Spec.Common = common.UpdateAquaCommon(cr.Spec.Common, cr.Name, false, false)
+
+	return cr
 }
 
 /*	----------------------------------------------------------------------------------------------------------------
@@ -185,7 +172,7 @@ func (r *ReconcileAquaGateway) InstallGatewayService(cr *operatorv1alpha1.AquaGa
 
 	// Set AquaGateway instance as the owner and controller
 	if err := controllerutil.SetControllerReference(cr, service, r.scheme); err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	// Check if this service already exists
@@ -195,17 +182,17 @@ func (r *ReconcileAquaGateway) InstallGatewayService(cr *operatorv1alpha1.AquaGa
 		reqLogger.Info("Creating a New Aqua Gateway Service", "Service.Namespace", service.Namespace, "Service.Name", service.Name)
 		err = r.client.Create(context.TODO(), service)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	} else if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	// Service already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Gateway Service Already Exists", "Service.Namespace", found.Namespace, "Service.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 }
 
 func (r *ReconcileAquaGateway) InstallGatewayDeployment(cr *operatorv1alpha1.AquaGateway) (reconcile.Result, error) {
@@ -218,7 +205,7 @@ func (r *ReconcileAquaGateway) InstallGatewayDeployment(cr *operatorv1alpha1.Aqu
 
 	// Set AquaGateway instance as the owner and controller
 	if err := controllerutil.SetControllerReference(cr, deployment, r.scheme); err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	// Check if this deployment already exists
@@ -228,12 +215,12 @@ func (r *ReconcileAquaGateway) InstallGatewayDeployment(cr *operatorv1alpha1.Aqu
 		reqLogger.Info("Creating a New Aqua Gateway Deployment", "Dervice.Namespace", deployment.Namespace, "Deployment.Name", deployment.Name)
 		err = r.client.Create(context.TODO(), deployment)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	} else if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	if found != nil {
@@ -243,10 +230,10 @@ func (r *ReconcileAquaGateway) InstallGatewayDeployment(cr *operatorv1alpha1.Aqu
 			err = r.client.Update(context.TODO(), found)
 			if err != nil {
 				reqLogger.Error(err, "Aqua Gateway: Failed to update Deployment.", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
-				return reconcile.Result{}, err
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 			}
 			// Spec updated - return and requeue
-			return reconcile.Result{Requeue: true}, nil
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 		}
 
 		podList := &corev1.PodList{}
@@ -259,125 +246,21 @@ func (r *ReconcileAquaGateway) InstallGatewayDeployment(cr *operatorv1alpha1.Aqu
 		err = r.client.List(context.TODO(), listOps, podList)
 		if err != nil {
 			reqLogger.Error(err, "Aqua Gateway: Failed to list pods.", "AquaGateway.Namespace", cr.Namespace, "AquaDatabase.Name", cr.Name)
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
-		podNames := common.GetPodNames(podList.Items)
+		podNames := k8s.PodNames(podList.Items)
 
 		// Update status.Nodes if needed
 		if !reflect.DeepEqual(podNames, cr.Status.Nodes) {
 			cr.Status.Nodes = podNames
 			err := r.client.Update(context.TODO(), cr)
 			if err != nil {
-				return reconcile.Result{}, err
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 			}
 		}
 	}
 
 	// Deployment already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Gateway Deployment Already Exists", "Deployment.Namespace", found.Namespace, "Deployment.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-/*	----------------------------------------------------------------------------------------------------------------
-							Requirments
-	----------------------------------------------------------------------------------------------------------------
-*/
-
-func (r *ReconcileAquaGateway) CreateImagePullSecret(cr *operatorv1alpha1.AquaGateway) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Gateway Requirments Phase", "Create Image Pull Secret")
-	reqLogger.Info("Start creating aqua images pull secret")
-
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewImagePullSecret(cr.Name, cr.Namespace)
-
-	// Set AquaGateway instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Image Pull Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Image Pull Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaGateway) CreateDbPasswordSecret(cr *operatorv1alpha1.AquaGateway) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Gateway Requirments Phase", "Create Db Password Secret")
-	reqLogger.Info("Start creating aqua db password secret")
-
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewDbPasswordSecret(cr.Name, cr.Namespace)
-
-	// Set AquaGateway instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Db Password Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Db Password Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaGateway) CreateAquaServiceAccount(cr *operatorv1alpha1.AquaGateway) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Gateway Requirments Phase", "Create Aqua Service Account")
-	reqLogger.Info("Start creating aqua service account")
-
-	// Define a new service account object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	sa := requirementsHelper.NewServiceAccount(cr.Name, cr.Namespace)
-
-	// Set AquaGateway instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, sa, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this service account already exists
-	found := &corev1.ServiceAccount{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Service Account", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
-		err = r.client.Create(context.TODO(), sa)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Service account already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Service Account Already Exists", "ServiceAccount.Namespace", found.Namespace, "ServiceAccount.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 }

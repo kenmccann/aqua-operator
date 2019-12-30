@@ -3,24 +3,19 @@ package aquadatabase
 import (
 	"fmt"
 
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/services"
+
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	"github.com/niso120b/aqua-operator/pkg/utils/extra"
+
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
-	"github.com/niso120b/aqua-operator/pkg/controller/common"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type AquaDatabaseParameters struct {
-	AquaDbDeploymentName    string
-	AquaDbServiceName       string
-	AquaDbPvcName           string
-	AquaDbInternal          bool
-	AquaDbImage             operatorv1alpha1.AquaImage
-	AquaServiceAccount      string
-	AquaDbSecretName        string
-	AquaDbSecretKey         string
-	AquaDatabaseServiceType string
+	Database *operatorv1alpha1.AquaDatabase
 }
 
 type AquaDatabaseHelper struct {
@@ -29,30 +24,7 @@ type AquaDatabaseHelper struct {
 
 func newAquaDatabaseHelper(cr *operatorv1alpha1.AquaDatabase) *AquaDatabaseHelper {
 	params := AquaDatabaseParameters{
-		AquaDbDeploymentName:    fmt.Sprintf("%s-database", cr.Name),
-		AquaDbServiceName:       fmt.Sprintf("%s-database-svc", cr.Name),
-		AquaDbPvcName:           fmt.Sprintf("%s-database-pvc", cr.Name),
-		AquaDbInternal:          false,
-		AquaDbImage:             *cr.Spec.DbService.ImageData,
-		AquaDatabaseServiceType: "ClusterIP",
-	}
-
-	if &params.AquaDbImage != nil {
-		params.AquaDbInternal = true
-	}
-
-	if !cr.Spec.Requirements {
-		params.AquaServiceAccount = cr.Spec.ServiceAccountName
-		params.AquaDbSecretName = cr.Spec.DbSecretName
-		params.AquaDbSecretKey = cr.Spec.DbSecretKey
-	} else {
-		params.AquaServiceAccount = fmt.Sprintf("%s-sa", cr.Name)
-		params.AquaDbSecretName = fmt.Sprintf("%s-database-password", cr.Name)
-		params.AquaDbSecretKey = "db-password"
-	}
-
-	if len(cr.Spec.DbService.ServiceType) > 0 {
-		params.AquaDatabaseServiceType = cr.Spec.DbService.ServiceType
+		Database: cr,
 	}
 
 	return &AquaDatabaseHelper{
@@ -61,6 +33,8 @@ func newAquaDatabaseHelper(cr *operatorv1alpha1.AquaDatabase) *AquaDatabaseHelpe
 }
 
 func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *appsv1.Deployment {
+	pullPolicy, registry, repository, tag := extra.GetImageData("database", cr.Spec.Infrastructure.Version, cr.Spec.DbService.ImageData)
+
 	labels := map[string]string{
 		"app":                cr.Name + "-database",
 		"deployedby":         "aqua-operator",
@@ -75,13 +49,13 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 			Kind:       "Deployment",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        db.Parameters.AquaDbDeploymentName,
+			Name:        fmt.Sprintf(consts.DbDeployName, cr.Name),
 			Namespace:   cr.Namespace,
 			Labels:      labels,
 			Annotations: annotations,
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: common.Int32Ptr(int32(cr.Spec.DbService.Replicas)),
+			Replicas: extra.Int32Ptr(int32(cr.Spec.DbService.Replicas)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: labels,
 			},
@@ -90,12 +64,12 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: db.Parameters.AquaServiceAccount,
+					ServiceAccountName: cr.Spec.Infrastructure.ServiceAccount,
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-db",
-							Image:           fmt.Sprintf("%s/%s:%s", db.Parameters.AquaDbImage.Registry, db.Parameters.AquaDbImage.Repository, db.Parameters.AquaDbImage.Tag),
-							ImagePullPolicy: corev1.PullPolicy(db.Parameters.AquaDbImage.PullPolicy),
+							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "postgres-database",
@@ -118,9 +92,9 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 									ValueFrom: &corev1.EnvVarSource{
 										SecretKeyRef: &corev1.SecretKeySelector{
 											LocalObjectReference: corev1.LocalObjectReference{
-												Name: db.Parameters.AquaDbSecretName,
+												Name: db.Parameters.Database.Spec.Common.DatabaseSecret.Name,
 											},
-											Key: db.Parameters.AquaDbSecretKey,
+											Key: db.Parameters.Database.Spec.Common.DatabaseSecret.Key,
 										},
 									},
 								},
@@ -132,7 +106,7 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 							Name: "postgres-database",
 							VolumeSource: corev1.VolumeSource{
 								PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-									ClaimName: db.Parameters.AquaDbPvcName,
+									ClaimName: fmt.Sprintf(consts.DbPvcName, cr.Name),
 								},
 							},
 						},
@@ -170,9 +144,11 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 		}
 	}
 
-	if cr.Spec.Openshift {
-		deployment.Spec.Template.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{
-			Privileged: &cr.Spec.Openshift,
+	if len(cr.Spec.Common.ImagePullSecret) != 0 {
+		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+			corev1.LocalObjectReference{
+				Name: cr.Spec.Common.ImagePullSecret,
+			},
 		}
 	}
 
@@ -180,73 +156,24 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 }
 
 func (db *AquaDatabaseHelper) newService(cr *operatorv1alpha1.AquaDatabase) *corev1.Service {
-	labels := map[string]string{
-		"app":                cr.Name + "-database",
-		"deployedby":         "aqua-operator",
-		"aquasecoperator_cr": cr.Name,
-	}
-	annotations := map[string]string{
-		"description": "Deploy the aqua database service",
-	}
 	selectors := map[string]string{
 		"app": cr.Name + "-database",
 	}
-	service := &corev1.Service{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "core/v1",
-			Kind:       "Service",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        db.Parameters.AquaDbServiceName,
-			Namespace:   cr.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceType(db.Parameters.AquaDatabaseServiceType),
-			Selector: selectors,
-			Ports: []corev1.ServicePort{
-				{
-					Port: 5432,
-				},
-			},
+
+	ports := []corev1.ServicePort{
+		{
+			Port: 5432,
 		},
 	}
+
+	service := services.CreateService(cr.Name,
+		cr.Namespace,
+		fmt.Sprintf(consts.DbServiceName, cr.Name),
+		fmt.Sprintf("%s-database", cr.Name),
+		"Service for aqua database deployment",
+		cr.Spec.DbService.ServiceType,
+		selectors,
+		ports)
 
 	return service
-}
-
-func (db *AquaDatabaseHelper) newPersistentVolumeClaim(cr *operatorv1alpha1.AquaDatabase) *corev1.PersistentVolumeClaim {
-	labels := map[string]string{
-		"app":                cr.Name + "-database",
-		"deployedby":         "aqua-operator",
-		"aquasecoperator_cr": cr.Name,
-	}
-	annotations := map[string]string{
-		"description": "Persistent Volume Claim for aqua database server",
-	}
-	pvc := &corev1.PersistentVolumeClaim{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "core/v1",
-			Kind:       "PersistentVolumeClaim",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        db.Parameters.AquaDbPvcName,
-			Namespace:   cr.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{
-				corev1.ReadWriteOnce,
-			},
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					"storage": resource.MustParse("30Gi"),
-				},
-			},
-		},
-	}
-
-	return pvc
 }

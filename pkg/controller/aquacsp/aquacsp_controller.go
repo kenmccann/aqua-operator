@@ -6,13 +6,18 @@ import (
 	"reflect"
 	"time"
 
+	"github.com/niso120b/aqua-operator/pkg/consts"
+
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/secrets"
+
 	syserrors "errors"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
 	"github.com/niso120b/aqua-operator/pkg/controller/common"
+	"github.com/niso120b/aqua-operator/pkg/utils/extra"
+
 	appsv1 "k8s.io/api/apps/v1beta1"
 	corev1 "k8s.io/api/core/v1"
-	v1beta1 "k8s.io/api/policy/v1beta1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,12 +33,6 @@ import (
 )
 
 var log = logf.Log.WithName("controller_aquacsp")
-
-const (
-	MinScanners         int64 = 1
-	MaxScanners         int64 = 5
-	MaxImagesPerScanner int64 = 250
-)
 
 /**
 * USER ACTION REQUIRED: This is a scaffold file intended for the user to modify with their own Controller
@@ -112,14 +111,6 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 
 	// RBAC
 
-	err = c.Watch(&source.Kind{Type: &v1beta1.PodSecurityPolicy{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &operatorv1alpha1.AquaCsp{},
-	})
-	if err != nil {
-		return err
-	}
-
 	err = c.Watch(&source.Kind{Type: &rbacv1.ClusterRole{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &operatorv1alpha1.AquaCsp{},
@@ -174,36 +165,70 @@ func (r *ReconcileAquaCsp) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{}, err
 	}
 
-	if instance.Spec.Requirements {
-		reqLogger.Info("Start Setup Requirment For Aqua CSP")
-		if len(instance.Spec.RegistryData.ImagePullSecretName) == 0 {
+	instance = r.updateCspObject(instance)
+
+	if instance.Spec.Infrastructure.Requirements {
+		reqLogger.Info("Start Setup Requirment For Aqua CSP...")
+
+		if instance.Spec.RegistryData != nil {
+			reqLogger.Info("Start Setup Aqua Image Secret Secret")
 			_, err = r.CreateImagePullSecret(instance)
 			if err != nil {
-				return reconcile.Result{}, err
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 			}
 		}
 
+		reqLogger.Info("Start Setup Aqua Service Account")
 		_, err = r.CreateAquaServiceAccount(instance)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
+	}
 
-		reqLogger.Info("Start Setup Secret For Database Password")
-		_, err = r.CreateDbPasswordSecret(instance)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
+	reqLogger.Info("Creating discovery cluster roles...")
+	_, err = r.CreateClusterRole(instance)
+	if err != nil {
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
+	}
+
+	reqLogger.Info("Creating discovery cluster roles binding...")
+	_, err = r.CreateClusterRoleBinding(instance)
+	if err != nil {
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	dbstatus := true
 	if instance.Spec.DbService != nil {
-		reqLogger.Info("CSP Deployment: Start Setup Internal Aqua Database (Not For Production Usage)")
+		reqLogger.Info("Start Setup Secret For Database Password")
+		password := extra.CreateRundomPassword()
+		_, err = r.CreateDbPasswordSecret(instance, password)
+		if err != nil {
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
+		}
+
+		reqLogger.Info("CSP Deployment: Start Setup Internal Aqua Database (Not Recommended For Production Usage)")
 		_, err = r.InstallAquaDatabase(instance)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
 		dbstatus, _ = r.WaitForDatabase(instance)
+	} else if instance.Spec.ExternalDb != nil {
+		if len(instance.Spec.ExternalDb.Password) != 0 {
+			_, err = r.CreateDbPasswordSecret(instance, instance.Spec.ExternalDb.Password)
+			if err != nil {
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
+			}
+		} else {
+			if instance.Spec.Common.DatabaseSecret != nil {
+				exists := secrets.CheckIfSecretExists(r.client, instance.Spec.Common.DatabaseSecret.Name, instance.Namespace)
+				if !exists {
+					reqLogger.Error(syserrors.New("For using external db you must define password, or define the secret name and key in common section!"), "Missing external database password definition")
+				}
+			} else {
+				reqLogger.Error(syserrors.New("For using external db you must define password, or define the secret name and key in common section!"), "Missing external database password definition")
+			}
+		}
 	}
 
 	if dbstatus {
@@ -217,12 +242,12 @@ func (r *ReconcileAquaCsp) Reconcile(request reconcile.Request) (reconcile.Resul
 
 		_, err = r.InstallAquaGateway(instance)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
 		_, err = r.InstallAquaServer(instance)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
 		gwstatus, _ := r.WaitForGateway(instance)
@@ -245,44 +270,65 @@ func (r *ReconcileAquaCsp) Reconcile(request reconcile.Request) (reconcile.Resul
 		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	}
 
-	if instance.Spec.Rbac != nil {
-		if instance.Spec.Rbac.Enable {
-			if !(len(instance.Spec.Rbac.RoleRef) > 0) {
-				_, err = r.CreatePodSecurityPolicy(instance)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-
-				_, err = r.CreateClusterRole(instance)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-			}
-
-			_, err = r.CreateClusterRoleBinding(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-		}
-	}
-
 	if !reflect.DeepEqual(operatorv1alpha1.AquaDeploymentStateRunning, instance.Status.State) {
 		instance.Status.State = operatorv1alpha1.AquaDeploymentStateRunning
 		_ = r.client.Update(context.TODO(), instance)
 	}
 
-	if instance.Spec.Scanner != nil {
-		if instance.Spec.Scanner.Deploy != nil {
-			_, err = r.InstallAquaScanner(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
+	if instance.Spec.ScannerService != nil {
+		_, err = r.InstallAquaScanner(instance)
+		if err != nil {
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		_, _ = r.ScaleScannerCLI(instance)
+		if instance.Spec.Scale != nil {
+			_, err = r.ScaleScannerCLI(instance)
+			if err != nil {
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
+			}
+		}
 	}
 
 	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
+}
+
+func (r *ReconcileAquaCsp) updateCspObject(cr *operatorv1alpha1.AquaCsp) *operatorv1alpha1.AquaCsp {
+	admin := false
+	license := false
+
+	if len(cr.Spec.AdminPassword) != 0 {
+		admin = true
+	}
+
+	if len(cr.Spec.LicenseToken) != 0 {
+		license = true
+	}
+
+	cr.Spec.Infrastructure = common.UpdateAquaInfrastructure(cr.Spec.Infrastructure, cr.Name, cr.Namespace)
+	cr.Spec.Common = common.UpdateAquaCommon(cr.Spec.Common, cr.Name, admin, license)
+
+	if cr.Spec.ServerService == nil {
+		cr.Spec.ServerService = &operatorv1alpha1.AquaService{
+			Replicas:    1,
+			ServiceType: "LoadBalancer",
+		}
+	}
+
+	if cr.Spec.GatewayService == nil {
+		cr.Spec.GatewayService = &operatorv1alpha1.AquaService{
+			Replicas:    1,
+			ServiceType: "ClusterIP",
+		}
+	}
+
+	if cr.Spec.DbService == nil && cr.Spec.ExternalDb == nil {
+		cr.Spec.DbService = &operatorv1alpha1.AquaService{
+			Replicas:    1,
+			ServiceType: "ClusterIP",
+		}
+	}
+
+	return cr
 }
 
 /*	----------------------------------------------------------------------------------------------------------------
@@ -310,12 +356,12 @@ func (r *ReconcileAquaCsp) InstallAquaDatabase(cr *operatorv1alpha1.AquaCsp) (re
 		reqLogger.Info("Creating a New Aqua Database", "AquaDatabase.Namespace", aquadb.Namespace, "AquaDatabase.Name", aquadb.Name)
 		err = r.client.Create(context.TODO(), aquadb)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	} else if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	if found != nil {
@@ -328,13 +374,13 @@ func (r *ReconcileAquaCsp) InstallAquaDatabase(cr *operatorv1alpha1.AquaCsp) (re
 				return reconcile.Result{}, err
 			}
 			// Spec updated - return and requeue
-			return reconcile.Result{Requeue: true}, nil
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 		}
 	}
 
 	// AquaDatabase already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Database Exists", "AquaDatabase.Namespace", found.Namespace, "AquaDatabase.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 }
 
 func (r *ReconcileAquaCsp) InstallAquaGateway(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
@@ -357,12 +403,12 @@ func (r *ReconcileAquaCsp) InstallAquaGateway(cr *operatorv1alpha1.AquaCsp) (rec
 		reqLogger.Info("Creating a New Aqua Gateway", "AquaGateway.Namespace", aquagw.Namespace, "AquaGateway.Name", aquagw.Name)
 		err = r.client.Create(context.TODO(), aquagw)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	} else if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	if found != nil {
@@ -375,13 +421,13 @@ func (r *ReconcileAquaCsp) InstallAquaGateway(cr *operatorv1alpha1.AquaCsp) (rec
 				return reconcile.Result{}, err
 			}
 			// Spec updated - return and requeue
-			return reconcile.Result{Requeue: true}, nil
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 		}
 	}
 
 	// AquaGateway already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Gateway Exists", "AquaGateway.Namespace", found.Namespace, "AquaGateway.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 }
 
 func (r *ReconcileAquaCsp) InstallAquaServer(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
@@ -404,12 +450,12 @@ func (r *ReconcileAquaCsp) InstallAquaServer(cr *operatorv1alpha1.AquaCsp) (reco
 		reqLogger.Info("Creating a New Aqua AquaServer", "AquaServer.Namespace", aquasr.Namespace, "AquaServer.Name", aquasr.Name)
 		err = r.client.Create(context.TODO(), aquasr)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	} else if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	if found != nil {
@@ -419,19 +465,17 @@ func (r *ReconcileAquaCsp) InstallAquaServer(cr *operatorv1alpha1.AquaCsp) (reco
 			err = r.client.Update(context.TODO(), found)
 			if err != nil {
 				reqLogger.Error(err, "Aqua CSP: Failed to update aqua server replicas.", "AquaServer.Namespace", found.Namespace, "AquaServer.Name", found.Name)
-				return reconcile.Result{}, err
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 			}
 			// Spec updated - return and requeue
-			return reconcile.Result{Requeue: true}, nil
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 		}
 	}
 
 	// AquaServer already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Server Exists", "AquaServer.Namespace", found.Namespace, "AquaServer.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 }
-
-// Aqua Scanner Optional
 
 func (r *ReconcileAquaCsp) InstallAquaScanner(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
 	reqLogger := log.WithValues("CSP - AquaScanner Phase", "Install Aqua Scanner")
@@ -453,12 +497,12 @@ func (r *ReconcileAquaCsp) InstallAquaScanner(cr *operatorv1alpha1.AquaCsp) (rec
 		reqLogger.Info("Creating a New Aqua Scanner", "AquaScanner.Namespace", scanner.Namespace, "AquaScanner.Name", scanner.Name)
 		err = r.client.Create(context.TODO(), scanner)
 		if err != nil {
-			return reconcile.Result{}, err
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 		}
 
-		return reconcile.Result{}, nil
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 	} else if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	if found != nil {
@@ -468,120 +512,16 @@ func (r *ReconcileAquaCsp) InstallAquaScanner(cr *operatorv1alpha1.AquaCsp) (rec
 			err = r.client.Update(context.TODO(), found)
 			if err != nil {
 				reqLogger.Error(err, "Aqua CSP: Failed to update aqua scanner replicas.", "AquaScanner.Namespace", found.Namespace, "AquaScanner.Name", found.Name)
-				return reconcile.Result{}, err
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 			}
 			// Spec updated - return and requeue
-			return reconcile.Result{Requeue: true}, nil
+			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 		}
 	}
 
 	// AquaScanner already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Scanner Exists", "AquaScanner.Namespace", found.Namespace, "AquaScanner.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-/*	----------------------------------------------------------------------------------------------------------------
-							Requirments
-	----------------------------------------------------------------------------------------------------------------
-*/
-
-func (r *ReconcileAquaCsp) CreateImagePullSecret(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Csp Requirments Phase", "Create Image Pull Secret")
-	reqLogger.Info("Start creating aqua images pull secret")
-
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewImagePullSecret(cr.Name, cr.Namespace)
-
-	// Set AquaCspKind instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Image Pull Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Image Pull Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaCsp) CreateDbPasswordSecret(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Csp Requirments Phase", "Create Db Password Secret")
-	reqLogger.Info("Start creating aqua db password secret")
-
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewDbPasswordSecret(cr.Name, cr.Namespace)
-
-	// Set AquaCspKind instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Db Password Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Db Password Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaCsp) CreateAquaServiceAccount(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Csp Requirments Phase", "Create Aqua Service Account")
-	reqLogger.Info("Start creating aqua service account")
-
-	// Define a new service account object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	sa := requirementsHelper.NewServiceAccount(cr.Name, cr.Namespace)
-
-	// Set AquaCspKind instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, sa, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this service account already exists
-	found := &corev1.ServiceAccount{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Service Account", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
-		err = r.client.Create(context.TODO(), sa)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Service account already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Service Account Already Exists", "ServiceAccount.Namespace", found.Namespace, "ServiceAccount.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 }
 
 /*	----------------------------------------------------------------------------------------------------------------
@@ -598,11 +538,7 @@ func (r *ReconcileAquaCsp) WaitForDatabase(cr *operatorv1alpha1.AquaCsp) (bool, 
 		return false, err
 	}
 
-	if !ready {
-		return false, nil
-	}
-
-	return true, nil
+	return ready, nil
 }
 
 func (r *ReconcileAquaCsp) GetPostgresReady(cr *operatorv1alpha1.AquaCsp) (bool, error) {
@@ -610,7 +546,7 @@ func (r *ReconcileAquaCsp) GetPostgresReady(cr *operatorv1alpha1.AquaCsp) (bool,
 
 	selector := types.NamespacedName{
 		Namespace: cr.Namespace,
-		Name:      cr.Name + "-database",
+		Name:      fmt.Sprintf(consts.DbDeployName, cr.Name),
 	}
 
 	err := r.client.Get(context.TODO(), selector, &resource)
@@ -618,7 +554,7 @@ func (r *ReconcileAquaCsp) GetPostgresReady(cr *operatorv1alpha1.AquaCsp) (bool,
 		return false, err
 	}
 
-	return resource.Status.ReadyReplicas == 1, nil
+	return int(resource.Status.ReadyReplicas) == int(cr.Spec.DbService.Replicas), nil
 }
 
 func (r *ReconcileAquaCsp) WaitForGateway(cr *operatorv1alpha1.AquaCsp) (bool, error) {
@@ -630,11 +566,7 @@ func (r *ReconcileAquaCsp) WaitForGateway(cr *operatorv1alpha1.AquaCsp) (bool, e
 		return false, err
 	}
 
-	if !ready {
-		return false, nil
-	}
-
-	return true, nil
+	return ready, nil
 }
 
 func (r *ReconcileAquaCsp) GetGatewayReady(cr *operatorv1alpha1.AquaCsp) (bool, error) {
@@ -642,7 +574,7 @@ func (r *ReconcileAquaCsp) GetGatewayReady(cr *operatorv1alpha1.AquaCsp) (bool, 
 
 	selector := types.NamespacedName{
 		Namespace: cr.Namespace,
-		Name:      cr.Name + "-gateway",
+		Name:      fmt.Sprintf(consts.GatewayDeployName, cr.Name),
 	}
 
 	err := r.client.Get(context.TODO(), selector, &resource)
@@ -650,7 +582,7 @@ func (r *ReconcileAquaCsp) GetGatewayReady(cr *operatorv1alpha1.AquaCsp) (bool, 
 		return false, err
 	}
 
-	return resource.Status.ReadyReplicas == 1, nil
+	return int(resource.Status.ReadyReplicas) == int(cr.Spec.GatewayService.Replicas), nil
 }
 
 func (r *ReconcileAquaCsp) WaitForServer(cr *operatorv1alpha1.AquaCsp) (bool, error) {
@@ -662,11 +594,7 @@ func (r *ReconcileAquaCsp) WaitForServer(cr *operatorv1alpha1.AquaCsp) (bool, er
 		return false, err
 	}
 
-	if !ready {
-		return false, nil
-	}
-
-	return true, nil
+	return ready, nil
 }
 
 func (r *ReconcileAquaCsp) GetServerReady(cr *operatorv1alpha1.AquaCsp) (bool, error) {
@@ -674,7 +602,7 @@ func (r *ReconcileAquaCsp) GetServerReady(cr *operatorv1alpha1.AquaCsp) (bool, e
 
 	selector := types.NamespacedName{
 		Namespace: cr.Namespace,
-		Name:      cr.Name + "-server",
+		Name:      fmt.Sprintf(consts.ServerDeployName, cr.Name),
 	}
 
 	err := r.client.Get(context.TODO(), selector, &resource)
@@ -682,142 +610,18 @@ func (r *ReconcileAquaCsp) GetServerReady(cr *operatorv1alpha1.AquaCsp) (bool, e
 		return false, err
 	}
 
-	return resource.Status.ReadyReplicas == 1, nil
-}
-
-/*	----------------------------------------------------------------------------------------------------------------
-							RBAC
-	----------------------------------------------------------------------------------------------------------------
-*/
-
-func (r *ReconcileAquaCsp) CreatePodSecurityPolicy(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	reqLogger := log.WithValues("CSP - RBAC Phase", "Create PodSecurityPolicy")
-	reqLogger.Info("Start creating PodSecurityPolicy")
-
-	// Define a new PodSecurityPolicy object
-	rbacHelper := common.NewAquaRbacHelper(cr.Spec.Requirements, cr.Spec.ServiceAccountName, *cr.Spec.Rbac, cr.Name, cr.Namespace, cr.Spec.Rbac.Openshift)
-	psp := rbacHelper.NewPodSecurityPolicy()
-
-	// Set AquaCsp instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, psp, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this PodSecurityPolicy already exists
-	found := &v1beta1.PodSecurityPolicy{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: psp.Name, Namespace: psp.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Aqua CSP: Creating a New PodSecurityPolicy", "PodSecurityPolicy.Namespace", psp.Namespace, "PodSecurityPolicy.Name", psp.Name)
-		err = r.client.Create(context.TODO(), psp)
-		if err != nil {
-			return reconcile.Result{Requeue: true}, nil // TODO: reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// PodSecurityPolicy already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua PodSecurityPolicy Already Exists", "PodSecurityPolicy.Namespace", found.Namespace, "PodSecurityPolicy.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaCsp) CreateClusterRole(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	reqLogger := log.WithValues("CSP - RBAC Phase", "Create ClusterRole")
-	reqLogger.Info("Start creating ClusterRole")
-
-	// Define a new ClusterRole object
-	rbacHelper := common.NewAquaRbacHelper(cr.Spec.Requirements, cr.Spec.ServiceAccountName, *cr.Spec.Rbac, cr.Name, cr.Namespace, cr.Spec.Rbac.Openshift)
-	crole := rbacHelper.NewClusterRole()
-
-	// Set AquaCsp instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, crole, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this ClusterRole already exists
-	found := &rbacv1.ClusterRole{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: crole.Name, Namespace: crole.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Aqua CSP: Creating a New ClusterRole", "ClusterRole.Namespace", crole.Namespace, "ClusterRole.Name", crole.Name)
-		err = r.client.Create(context.TODO(), crole)
-		if err != nil {
-			return reconcile.Result{Requeue: true}, nil // TODO: reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// ClusterRole already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua ClusterRole Exists", "ClusterRole.Namespace", found.Namespace, "ClusterRole.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaCsp) CreateClusterRoleBinding(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	reqLogger := log.WithValues("CSP - RBAC Phase", "Create ClusterRoleBinding")
-	reqLogger.Info("Start creating ClusterRole")
-
-	// Define a new ClusterRoleBinding object
-	rbacHelper := common.NewAquaRbacHelper(cr.Spec.Requirements, cr.Spec.ServiceAccountName, *cr.Spec.Rbac, cr.Name, cr.Namespace, cr.Spec.Rbac.Openshift)
-	crb := rbacHelper.NewClusterRoleBinding()
-
-	// Set AquaCsp instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, crb, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this ClusterRoleBinding already exists
-	found := &rbacv1.ClusterRoleBinding{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name, Namespace: crb.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Aqua CSP: Creating a New ClusterRoleBinding", "ClusterRoleBinding.Namespace", crb.Namespace, "ClusterRoleBinding.Name", crb.Name)
-		err = r.client.Create(context.TODO(), crb)
-		if err != nil {
-			return reconcile.Result{Requeue: true}, nil // TODO: reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// ClusterRoleBinding already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua ClusterRoleBinding Exists", "ClusterRoleBinding.Namespace", found.Namespace, "ClusterRole.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
+	return int(resource.Status.ReadyReplicas) == int(cr.Spec.ServerService.Replicas), nil
 }
 
 func (r *ReconcileAquaCsp) ScaleScannerCLI(cr *operatorv1alpha1.AquaCsp) (reconcile.Result, error) {
-	max := MaxScanners
-	min := MinScanners
-	name := cr.Name
-	scannersPerImages := MaxImagesPerScanner
-
-	if cr.Spec.Scanner.Max != 0 {
-		max = cr.Spec.Scanner.Max
-	}
-
-	if cr.Spec.Scanner.Min != 0 {
-		min = cr.Spec.Scanner.Min
-	}
-
-	if cr.Spec.Scanner.ImagesPerScanner != 0 {
-		scannersPerImages = cr.Spec.Scanner.ImagesPerScanner
-	}
-
-	if len(cr.Spec.Scanner.Name) > 0 {
-		name = cr.Spec.Scanner.Name
-	}
-
 	reqLogger := log.WithValues("CSP - Scale", "Scale Aqua Scanner CLI")
 	reqLogger.Info("Start get scanner cli data")
 
-	result, err := common.GetPendingScanQueue("administrator", cr.Spec.AdminPassword, fmt.Sprintf("%s-server-svc", cr.Name))
+	// TODO:
+	result, err := common.GetPendingScanQueue("administrator", cr.Spec.AdminPassword, fmt.Sprintf(consts.ServerServiceName, cr.Name))
 	if err != nil {
 		reqLogger.Info("Waiting for aqua server to be up...")
-		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
+		return reconcile.Result{}, err
 	}
 
 	reqLogger.Info("Count of pending scan queue", "Pending Scan Queue", result.Count)
@@ -830,7 +634,7 @@ func (r *ReconcileAquaCsp) ScaleScannerCLI(cr *operatorv1alpha1.AquaCsp) (reconc
 	count := int64(0)
 	err = r.client.List(context.TODO(), &client.ListOptions{}, nodes)
 	if err != nil {
-		return reconcile.Result{}, err
+		return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 	}
 
 	for index := 0; index < len(nodes.Items); index++ {
@@ -851,26 +655,29 @@ func (r *ReconcileAquaCsp) ScaleScannerCLI(cr *operatorv1alpha1.AquaCsp) (reconc
 		count = 1
 	}
 
-	scanners := result.Count / scannersPerImages
-	extraScanners := result.Count % scannersPerImages
+	scanners := result.Count / cr.Spec.Scale.ImagesPerScanner
+	extraScanners := result.Count % cr.Spec.Scale.ImagesPerScanner
 
-	if scanners < min {
-		scanners = min
+	if scanners < cr.Spec.Scale.Min {
+		scanners = cr.Spec.Scale.Min
 	} else {
 		if extraScanners > 0 {
 			scanners = scanners + 1
 		}
 
-		if (max * count) < scanners {
-			scanners = (max * count)
+		if (cr.Spec.Scale.Max * count) < scanners {
+			scanners = (cr.Spec.Scale.Max * count)
 		}
 	}
 
 	reqLogger.Info("Aqua CSP Scanner Scale:", "Final Scanners Count:", scanners)
 
 	found := &operatorv1alpha1.AquaScanner{}
-	err = r.client.Get(context.TODO(), types.NamespacedName{Name: name, Namespace: cr.Namespace}, found)
-	if found != nil && err == nil {
+	err = r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Name, Namespace: cr.Namespace}, found)
+	if found != nil {
+		reqLogger.Info(string(found.Spec.ScannerService.Replicas))
+		reqLogger.Info(string(scanners))
+
 		if found.Spec.ScannerService.Replicas == scanners {
 			return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, nil
 		}
@@ -880,7 +687,7 @@ func (r *ReconcileAquaCsp) ScaleScannerCLI(cr *operatorv1alpha1.AquaCsp) (reconc
 			err = r.client.Update(context.TODO(), found)
 			if err != nil {
 				reqLogger.Error(err, "Aqua CSP Scanner Scale: Failed to update Aqua Scanner.", "AquaScanner.Namespace", found.Namespace, "AquaScanner.Name", found.Name)
-				return reconcile.Result{}, err
+				return reconcile.Result{Requeue: true, RequeueAfter: time.Duration(0)}, err
 			}
 		}
 	}

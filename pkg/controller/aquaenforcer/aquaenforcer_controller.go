@@ -2,10 +2,17 @@ package aquaenforcer
 
 import (
 	"context"
+	syserrors "errors"
+	"fmt"
 	"reflect"
 
-	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
 	"github.com/niso120b/aqua-operator/pkg/controller/common"
+
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/secrets"
+
+	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1beta1 "k8s.io/api/extensions/v1beta1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -85,14 +92,6 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 
 	// RBAC
 
-	err = c.Watch(&source.Kind{Type: &v1beta1.PodSecurityPolicy{}}, &handler.EnqueueRequestForOwner{
-		IsController: true,
-		OwnerType:    &operatorv1alpha1.AquaEnforcer{},
-	})
-	if err != nil {
-		return err
-	}
-
 	err = c.Watch(&source.Kind{Type: &rbacv1.ClusterRole{}}, &handler.EnqueueRequestForOwner{
 		IsController: true,
 		OwnerType:    &operatorv1alpha1.AquaEnforcer{},
@@ -147,54 +146,32 @@ func (r *ReconcileAquaEnforcer) Reconcile(request reconcile.Request) (reconcile.
 		return reconcile.Result{}, err
 	}
 
-	if instance.Spec.Requirements {
-		reqLogger.Info("Start Setup Requirment For Aqua Enforcer")
-
-		if len(instance.Spec.RegistryData.ImagePullSecretName) == 0 {
-			_, err = r.CreateImagePullSecret(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-		}
-
-		_, err = r.CreateAquaServiceAccount(instance)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-	}
+	instance = r.updateEnforcerObject(instance)
 
 	if instance.Spec.EnforcerService != nil {
-		if instance.Spec.EnforcerService.ImageData != nil {
+		if len(instance.Spec.Token) != 0 {
+			instance.Spec.Secret = &operatorv1alpha1.AquaSecret{
+				Name: fmt.Sprintf(consts.EnforcerTokenSecretName, instance.Name),
+				Key:  consts.EnforcerTokenSecretKey,
+			}
+
 			_, err = r.InstallEnforcerToken(instance)
 			if err != nil {
 				return reconcile.Result{}, err
 			}
+		} else if instance.Spec.Secret == nil {
+			reqLogger.Error(syserrors.New("You must specifie the enforcer token or the token secret name and key"), "Missing enforcer token")
+		} else {
+			exists := secrets.CheckIfSecretExists(r.client, instance.Spec.Secret.Name, instance.Namespace)
+			if !exists {
+				reqLogger.Error(syserrors.New("You must specifie the enforcer token or the token secret name and key"), "Missing enforcer token")
 
-			_, err = r.InstallEnforcerDaemonSet(instance)
-			if err != nil {
-				return reconcile.Result{}, err
 			}
 		}
-	}
 
-	if instance.Spec.Rbac != nil {
-		if instance.Spec.Rbac.Enable {
-			if !(len(instance.Spec.Rbac.RoleRef) > 0) {
-				_, err = r.CreatePodSecurityPolicy(instance)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-
-				_, err = r.CreateClusterRole(instance)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-			}
-
-			_, err = r.CreateClusterRoleBinding(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
+		_, err = r.InstallEnforcerDaemonSet(instance)
+		if err != nil {
+			return reconcile.Result{}, err
 		}
 	}
 
@@ -204,6 +181,36 @@ func (r *ReconcileAquaEnforcer) Reconcile(request reconcile.Request) (reconcile.
 	}
 
 	return reconcile.Result{Requeue: true}, nil
+}
+
+func (r *ReconcileAquaEnforcer) updateEnforcerObject(cr *operatorv1alpha1.AquaEnforcer) *operatorv1alpha1.AquaEnforcer {
+	version := cr.Spec.Infrastructure.Version
+	if len(version) == 0 {
+		version = consts.LatestVersion
+	}
+
+	if cr.Spec.EnforcerService == nil {
+		cr.Spec.EnforcerService = &operatorv1alpha1.AquaService{
+			ImageData: &operatorv1alpha1.AquaImage{
+				Repository: "enforcer",
+				Registry:   consts.Registry,
+				Tag:        version,
+				PullPolicy: consts.PullPolicy,
+			},
+		}
+	}
+
+	cr.Spec.Infrastructure = common.UpdateAquaInfrastructure(cr.Spec.Infrastructure, cr.Name, cr.Namespace)
+	cr.Spec.Common = common.UpdateAquaCommon(cr.Spec.Common, cr.Name, false, false)
+
+	if len(cr.Spec.Common.ImagePullSecret) != 0 {
+		exist := secrets.CheckIfSecretExists(r.client, cr.Name, cr.Namespace)
+		if !exist {
+			cr.Spec.Common.ImagePullSecret = consts.EmptyString
+		}
+	}
+
+	return cr
 }
 
 func (r *ReconcileAquaEnforcer) InstallEnforcerDaemonSet(cr *operatorv1alpha1.AquaEnforcer) (reconcile.Result, error) {
@@ -220,7 +227,7 @@ func (r *ReconcileAquaEnforcer) InstallEnforcerDaemonSet(cr *operatorv1alpha1.Aq
 	}
 
 	// Check if this DaemonSet already exists
-	found := &v1beta1.DaemonSet{}
+	found := &appsv1.DaemonSet{}
 	err := r.client.Get(context.TODO(), types.NamespacedName{Name: ds.Name, Namespace: ds.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
 		reqLogger.Info("Creating a New Aqua Database", "DaemonSet.Namespace", ds.Namespace, "DaemonSet.Name", ds.Name)
@@ -269,180 +276,5 @@ func (r *ReconcileAquaEnforcer) InstallEnforcerToken(cr *operatorv1alpha1.AquaEn
 
 	// Secret already exists - don't requeue
 	reqLogger.Info("Skip reconcile: Aqua Enforcer Token Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-/*	----------------------------------------------------------------------------------------------------------------
-							Requirments
-	----------------------------------------------------------------------------------------------------------------
-*/
-
-func (r *ReconcileAquaEnforcer) CreateImagePullSecret(cr *operatorv1alpha1.AquaEnforcer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Enforcer Requirments Phase", "Create Image Pull Secret")
-	reqLogger.Info("Start creating aqua images pull secret")
-
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewImagePullSecret(cr.Name, cr.Namespace)
-
-	// Set AquaEnforcer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Image Pull Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Image Pull Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaEnforcer) CreateAquaServiceAccount(cr *operatorv1alpha1.AquaEnforcer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Enforcer Requirments Phase", "Create Aqua Service Account")
-	reqLogger.Info("Start creating aqua service account")
-
-	// Define a new service account object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	sa := requirementsHelper.NewServiceAccount(cr.Name, cr.Namespace)
-
-	// Set AquaEnforcer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, sa, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this service account already exists
-	found := &corev1.ServiceAccount{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Service Account", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
-		err = r.client.Create(context.TODO(), sa)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Service account already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Service Account Already Exists", "ServiceAccount.Namespace", found.Namespace, "ServiceAccount.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-/*	----------------------------------------------------------------------------------------------------------------
-							RBAC
-	----------------------------------------------------------------------------------------------------------------
-*/
-
-func (r *ReconcileAquaEnforcer) CreatePodSecurityPolicy(cr *operatorv1alpha1.AquaEnforcer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("AquaEnforcer - RBAC Phase", "Create PodSecurityPolicy")
-	reqLogger.Info("Start creating PodSecurityPolicy")
-
-	// Define a new PodSecurityPolicy object
-	rbacHelper := common.NewAquaRbacHelper(cr.Spec.Requirements, cr.Spec.ServiceAccountName, *cr.Spec.Rbac, cr.Name, cr.Namespace, cr.Spec.Rbac.Openshift)
-	psp := rbacHelper.NewPodSecurityPolicy()
-
-	// Set AquaEnforcer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, psp, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this PodSecurityPolicy already exists
-	found := &v1beta1.PodSecurityPolicy{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: psp.Name, Namespace: psp.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Database", "PodSecurityPolicy.Namespace", psp.Namespace, "PodSecurityPolicy.Name", psp.Name)
-		err = r.client.Create(context.TODO(), psp)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// PodSecurityPolicy already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua PodSecurityPolicy Exists", "PodSecurityPolicy.Namespace", found.Namespace, "PodSecurityPolicy.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaEnforcer) CreateClusterRole(cr *operatorv1alpha1.AquaEnforcer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("AquaEnforcer - RBAC Phase", "Create ClusterRole")
-	reqLogger.Info("Start creating ClusterRole")
-
-	// Define a new ClusterRole object
-	rbacHelper := common.NewAquaRbacHelper(cr.Spec.Requirements, cr.Spec.ServiceAccountName, *cr.Spec.Rbac, cr.Name, cr.Namespace, cr.Spec.Rbac.Openshift)
-	crole := rbacHelper.NewClusterRole()
-
-	// Set AquaEnforcer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, crole, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this ClusterRole already exists
-	found := &rbacv1.ClusterRole{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: crole.Name, Namespace: crole.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Database", "ClusterRole.Namespace", crole.Namespace, "ClusterRole.Name", crole.Name)
-		err = r.client.Create(context.TODO(), crole)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// ClusterRole already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua ClusterRole Exists", "ClusterRole.Namespace", found.Namespace, "ClusterRole.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaEnforcer) CreateClusterRoleBinding(cr *operatorv1alpha1.AquaEnforcer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("AquaEnforcer - RBAC Phase", "Create ClusterRoleBinding")
-	reqLogger.Info("Start creating ClusterRole")
-
-	// Define a new ClusterRoleBinding object
-	rbacHelper := common.NewAquaRbacHelper(cr.Spec.Requirements, cr.Spec.ServiceAccountName, *cr.Spec.Rbac, cr.Name, cr.Namespace, cr.Spec.Rbac.Openshift)
-	crb := rbacHelper.NewClusterRoleBinding()
-
-	// Set AquaEnforcer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, crb, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this ClusterRoleBinding already exists
-	found := &rbacv1.ClusterRoleBinding{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: crb.Name, Namespace: crb.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Database", "ClusterRoleBinding.Namespace", crb.Namespace, "ClusterRoleBinding.Name", crb.Name)
-		err = r.client.Create(context.TODO(), crb)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// ClusterRoleBinding already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua ClusterRoleBinding Exists", "ClusterRoleBinding.Namespace", found.Namespace, "ClusterRole.Name", found.Name)
 	return reconcile.Result{Requeue: true}, nil
 }

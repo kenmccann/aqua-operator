@@ -2,47 +2,28 @@ package common
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/rbac"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
-	v1beta1 "k8s.io/api/policy/v1beta1"
+	"github.com/niso120b/aqua-operator/pkg/consts"
 	rbacv1 "k8s.io/api/rbac/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type RbacParameters struct {
-	Name                   string
-	Namespace              string
-	AquaServiceAccountName string
-	Requirement            bool
-	Openshift              bool
-	Rbac                   operatorv1alpha1.AquaRbacSettings
-	Privileged             bool
+	Name  string
+	Infra *operatorv1alpha1.AquaInfrastructure
 }
 
 type AquaRbacHelper struct {
 	Parameters RbacParameters
 }
 
-func NewAquaRbacHelper(requirments bool, serviceaccount string, rbac operatorv1alpha1.AquaRbacSettings, name string, namespace string, openshift bool) *AquaRbacHelper {
+func NewAquaRbacHelper(infra *operatorv1alpha1.AquaInfrastructure, name string) *AquaRbacHelper {
 	params := RbacParameters{
-		Name:                   name,
-		Namespace:              namespace,
-		AquaServiceAccountName: fmt.Sprintf("%s-sa", name),
-		Requirement:            requirments,
-		Rbac:                   rbac,
-		Openshift:              openshift,
-		Privileged:             true,
-	}
-
-	if !requirments {
-		if len(serviceaccount) > 0 {
-			params.AquaServiceAccountName = serviceaccount
-		}
-	}
-
-	if &params.Rbac != nil {
-		params.Privileged = params.Rbac.Privileged
+		Name:  name,
+		Infra: infra,
 	}
 
 	return &AquaRbacHelper{
@@ -55,90 +36,34 @@ func NewAquaRbacHelper(requirments bool, serviceaccount string, rbac operatorv1a
 	----------------------------------------------------------------------------------------------------------------
 */
 
-func (rb *AquaRbacHelper) NewPodSecurityPolicy() *v1beta1.PodSecurityPolicy {
-	labels := map[string]string{
-		"app":                rb.Parameters.Name + "-rbac",
-		"deployedby":         "aqua-operator",
-		"aquasecoperator_cr": rb.Parameters.Name,
-	}
-	annotations := map[string]string{
-		"description": "Deploy Aqua Pod Security Policy",
-	}
-	psp := &v1beta1.PodSecurityPolicy{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "extensions/v1beta1",
-			Kind:       "PodSecurityPolicy",
+func (rb *AquaRbacHelper) NewDiscoveryClusterRole(cr, namespace string) *rbacv1.ClusterRole {
+	rules := []rbacv1.PolicyRule{
+		{
+			APIGroups: []string{
+				"",
+			},
+			Resources: []string{
+				"nodes", "services", "endpoints", "pods", "deployments", "namespaces", "componentstatuses",
+			},
+			Verbs: []string{
+				"get", "list", "watch",
+			},
 		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        fmt.Sprintf("%s-psp", rb.Parameters.Name),
-			Namespace:   rb.Parameters.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Spec: v1beta1.PodSecurityPolicySpec{
-			Privileged: rb.Parameters.Privileged,
-			AllowedCapabilities: []corev1.Capability{
+		{
+			APIGroups: []string{
+				"rbac.authorization.k8s.io",
+			},
+			Resources: []string{
 				"*",
 			},
-			FSGroup: v1beta1.FSGroupStrategyOptions{
-				Rule: v1beta1.FSGroupStrategyRunAsAny,
-			},
-			RunAsUser: v1beta1.RunAsUserStrategyOptions{
-				Rule: v1beta1.RunAsUserStrategyRunAsAny,
-			},
-			SELinux: v1beta1.SELinuxStrategyOptions{
-				Rule: v1beta1.SELinuxStrategyRunAsAny,
-			},
-			SupplementalGroups: v1beta1.SupplementalGroupsStrategyOptions{
-				Rule: v1beta1.SupplementalGroupsStrategyRunAsAny,
-			},
-			Volumes: []v1beta1.FSType{
-				v1beta1.All,
+			Verbs: []string{
+				"get", "list", "watch",
 			},
 		},
 	}
 
-	return psp
-}
-
-func (rb *AquaRbacHelper) NewClusterRole() *rbacv1.ClusterRole {
-	labels := map[string]string{
-		"app":                rb.Parameters.Name + "-rbac",
-		"deployedby":         "aqua-operator",
-		"aquasecoperator_cr": rb.Parameters.Name,
-	}
-	annotations := map[string]string{
-		"description":              "Deploy Aqua Cluster Role",
-		"openshift.io/description": "A user who can search and scan images from an OpenShift integrated registry.",
-	}
-	crole := &rbacv1.ClusterRole{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "rbac.authorization.k8s.io/v1",
-			Kind:       "ClusterRole",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        fmt.Sprintf("%s-cluster-role", rb.Parameters.Name),
-			Namespace:   rb.Parameters.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Rules: []rbacv1.PolicyRule{
-			{
-				APIGroups: []string{
-					"extensions",
-				},
-				Resources: []string{
-					"podsecuritypolicies",
-				},
-				Verbs: []string{
-					"use",
-				},
-			},
-		},
-	}
-
-	if rb.Parameters.Openshift {
-		role := rbacv1.PolicyRule{
+	if strings.ToLower(rb.Parameters.Infra.Platform) == "openshift" {
+		rule := rbacv1.PolicyRule{
 			APIGroups: []string{
 				"",
 			},
@@ -152,51 +77,22 @@ func (rb *AquaRbacHelper) NewClusterRole() *rbacv1.ClusterRole {
 				"watch",
 			},
 		}
-		crole.Rules = append(crole.Rules, role)
+		rules = append(rules, rule)
 	}
+
+	crole := rbac.CreateClusterRole(cr, namespace, fmt.Sprintf(consts.DiscoveryClusterRole, cr), fmt.Sprintf("%s-rbac", cr), "Deploy Aqua Discovery Cluster Role", rules)
 
 	return crole
 }
 
-func (rb *AquaRbacHelper) NewClusterRoleBinding() *rbacv1.ClusterRoleBinding {
-	labels := map[string]string{
-		"app":                rb.Parameters.Name + "-rbac",
-		"deployedby":         "aqua-operator",
-		"aquasecoperator_cr": rb.Parameters.Name,
-	}
-	annotations := map[string]string{
-		"description": "Deploy Aqua Cluster Role Binding",
-	}
-	crb := &rbacv1.ClusterRoleBinding{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "rbac.authorization.k8s.io/v1",
-			Kind:       "ClusterRoleBinding",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        fmt.Sprintf("%s-role-binding", rb.Parameters.Name),
-			Namespace:   rb.Parameters.Namespace,
-			Labels:      labels,
-			Annotations: annotations,
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "ServiceAccount",
-				Name:      rb.Parameters.AquaServiceAccountName,
-				Namespace: rb.Parameters.Namespace,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			APIGroup: "rbac.authorization.k8s.io",
-			Kind:     "ClusterRole",
-			Name:     fmt.Sprintf("%s-cluster-role", rb.Parameters.Name),
-		},
-	}
-
-	if &rb.Parameters.Rbac != nil {
-		if len(rb.Parameters.Rbac.RoleRef) > 0 {
-			crb.RoleRef.Name = rb.Parameters.Rbac.RoleRef
-		}
-	}
+func (rb *AquaRbacHelper) NewDiscoveryClusterRoleBinding(cr, namespace, sa string) *rbacv1.ClusterRoleBinding {
+	crb := rbac.CreateClusterRoleBinding(cr,
+		namespace,
+		fmt.Sprintf(consts.DiscoveryClusterRoleBinding, cr),
+		fmt.Sprintf("%s-rbac", cr),
+		"Deploy Aqua Discovery Cluster Role Binding",
+		sa,
+		fmt.Sprintf(consts.DiscoveryClusterRole, cr))
 
 	return crb
 }

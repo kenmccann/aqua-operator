@@ -7,31 +7,22 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // AquaCspSpec defines the desired state of AquaCsp
+
 type AquaCspSpec struct {
-	Requirements       bool                `json:"requirements,required"`
-	ServiceAccountName string              `json:"serviceAccount,omitempty"`
-	DbSecretName       string              `json:"dbSecretName,omitempty"`
-	DbSecretKey        string              `json:"dbSecretKey,omitempty"`
-	RegistryData       *AquaDockerRegistry `json:"registry,omitempty"`
+	Infrastructure *AquaInfrastructure `json:"infra,omitempty"`
+	Common         *AquaCommon         `json:"common,omitempty"`
 
-	ExternalDb *AquaDatabaseInformation `json:"externalDb,omitempty"`
+	RegistryData *AquaDockerRegistry      `json:"registry,omitempty"`
+	ExternalDb   *AquaDatabaseInformation `json:"externalDb,omitempty"`
 
-	DbService      *AquaService `json:"database,omitempty"`
-	GatewayService *AquaService `json:"gateway,required"`
-	ServerService  *AquaService `json:"server,required"`
+	DbService      *AquaService         `json:"database,omitempty"`
+	GatewayService *AquaService         `json:"gateway,required"`
+	ServerService  *AquaService         `json:"server,required"`
+	ScannerService *AquaService         `json:"scanner,omitempty"`
+	Scale          *AquaScannerCliScale `json:"scale,omitempty"`
 
-	Scanner *AquaScannerCliScale `json:"scanner,omitempty"`
-
-	LicenseToken    string `json:"licenseToken,omitempty"`
-	AdminPassword   string `json:"adminPassword,omitempty"`
-	AquaSslCertPath string `json:"sslCertPath,omitempty"`
-	ClusterMode     bool   `json:"clusterMode,omitempty"`
-	DbSsl           bool   `json:"ssl,omitempty"`
-	DbAuditSsl      bool   `json:"auditSsl,omitempty"`
-
-	Rbac *AquaRbacSettings `json:"rbac,required"`
-
-	Dockerless bool `json:"dockerless,omitempty"`
+	LicenseToken  string `json:"licenseToken,omitempty"`
+	AdminPassword string `json:"adminPassword,omitempty"`
 }
 
 // AquaCspStatus defines the observed state of AquaCsp

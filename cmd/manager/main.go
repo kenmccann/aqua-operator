@@ -84,7 +84,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info("Starting the Cmd.")
+	log.Info("[Aqua Operator] Starting the Cmd.")
 
 	// Start the Cmd
 	if err := mgr.Start(signals.SetupSignalHandler()); err != nil {

@@ -1,3 +1,4 @@
+kubectl create ns aqua
 kubectl create -f  deploy/crds/operator_v1alpha1_aquadatabase_crd.yaml 
 kubectl create -f  deploy/crds/operator_v1alpha1_aquagateway_crd.yaml 
 kubectl create -f  deploy/crds/operator_v1alpha1_aquaserver_crd.yaml 

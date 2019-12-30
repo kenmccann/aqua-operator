@@ -34,18 +34,13 @@ The Operator deploys on Kubernetes and Openshift clusters.
 * **Openshift:** 3.11 +
 
 ## Documentation
+
 The following documentation is provided:
+
 - [Installation](docs/Installation.md)
 - [First Steps](docs/FirstSteps.md)
-- **Deployments**:
-  - [Aqua CSP](docs/AquaCsp.md) - **recommended**!
-  - [Aqua Server](docs/AquaServer.md)
-  - [Aqua Gateway](docs/AquaGateway.md)
-  - [Aqua Database](docs/AquaDatabase.md) - **Not For Production Environment - Please Use External DB with PostgreSQL Operator**
-  - [Aqua Enforcer](docs/AquaEnforcer.md)
-  - [Aqua Scanner CLI](docs/AquaScanner.md)
-- [Extra Aqua Types](docs/Types.md)
 - [Official Aqua Security Docs Site](https://read.aquasec.com/)
+- [Operator Hub Aqua](https://operatorhub.io/operator/aqua)
 
 ## Issues and feedback
 

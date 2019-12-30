@@ -2,22 +2,19 @@ package aquaenforcer
 
 import (
 	"fmt"
-	"strconv"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	"github.com/niso120b/aqua-operator/pkg/utils/extra"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1beta1 "k8s.io/api/extensions/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // EnforcerParameters :
 type EnforcerParameters struct {
-	AquaEnforcerDaemonSetName      string
-	AquaEnforcerTokenSecretName    string
-	AquaEnforcerServiceAccountName string
-	AquaEnforcerImage              operatorv1alpha1.AquaImage
-	Privileged                     bool
-	RuncInterception               string
+	Privileged bool
+	Enforcer   *operatorv1alpha1.AquaEnforcer
 }
 
 // AquaEnforcerHelper :
@@ -27,26 +24,8 @@ type AquaEnforcerHelper struct {
 
 func newAquaEnforcerHelper(cr *operatorv1alpha1.AquaEnforcer) *AquaEnforcerHelper {
 	params := EnforcerParameters{
-		AquaEnforcerDaemonSetName:      fmt.Sprintf("%s-ds", cr.Name),
-		AquaEnforcerTokenSecretName:    fmt.Sprintf("%s-token", cr.Name),
-		AquaEnforcerImage:              *cr.Spec.EnforcerService.ImageData,
-		AquaEnforcerServiceAccountName: fmt.Sprintf("%s-sa", cr.Name),
-		Privileged:                     true,
-		RuncInterception:               "0",
-	}
-
-	if !cr.Spec.Requirements {
-		if len(cr.Spec.ServiceAccountName) > 0 {
-			params.AquaEnforcerServiceAccountName = cr.Spec.ServiceAccountName
-		}
-	}
-
-	if cr.Spec.Rbac != nil {
-		params.Privileged = cr.Spec.Rbac.Privileged
-	}
-
-	if cr.Spec.RuncInterception {
-		params.RuncInterception = "1"
+		Privileged: true,
+		Enforcer:   cr,
 	}
 
 	return &AquaEnforcerHelper{
@@ -70,14 +49,14 @@ func (enf *AquaEnforcerHelper) CreateTokenSecret(cr *operatorv1alpha1.AquaEnforc
 			Kind:       "Secret",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        enf.Parameters.AquaEnforcerTokenSecretName,
+			Name:        fmt.Sprintf(consts.EnforcerTokenSecretName, cr.Name),
 			Namespace:   cr.Namespace,
 			Labels:      labels,
 			Annotations: annotations,
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"token": []byte(cr.Spec.Token),
+			consts.EnforcerTokenSecretKey: []byte(cr.Spec.Token),
 		},
 	}
 
@@ -85,7 +64,9 @@ func (enf *AquaEnforcerHelper) CreateTokenSecret(cr *operatorv1alpha1.AquaEnforc
 }
 
 // CreateDaemonSet :
-func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer) *v1beta1.DaemonSet {
+func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer) *appsv1.DaemonSet {
+	pullPolicy, registry, repository, tag := extra.GetImageData("enforcer", cr.Spec.Infrastructure.Version, cr.Spec.EnforcerService.ImageData)
+
 	labels := map[string]string{
 		"app":                cr.Name + "-requirments",
 		"deployedby":         "aqua-operator",
@@ -94,31 +75,34 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 	annotations := map[string]string{
 		"description": "Secret for aqua database password",
 	}
-	ds := &v1beta1.DaemonSet{
+	ds := &appsv1.DaemonSet{
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "core/v1",
-			Kind:       "Secret",
+			APIVersion: "apps/v1",
+			Kind:       "DaemonSet",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        enf.Parameters.AquaEnforcerDaemonSetName,
+			Name:        fmt.Sprintf(consts.EnforcerDeamonsetName, cr.Name),
 			Namespace:   cr.Namespace,
 			Labels:      labels,
 			Annotations: annotations,
 		},
-		Spec: v1beta1.DaemonSetSpec{
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: labels,
-					Name:   enf.Parameters.AquaEnforcerDaemonSetName,
+					Name:   fmt.Sprintf(consts.EnforcerDeamonsetName, cr.Name),
 				},
 				Spec: corev1.PodSpec{
-					ServiceAccountName: enf.Parameters.AquaEnforcerServiceAccountName,
+					ServiceAccountName: cr.Spec.Infrastructure.ServiceAccount,
 					HostPID:            true,
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-enforcer",
-							Image:           fmt.Sprintf("%s/%s:%s", enf.Parameters.AquaEnforcerImage.Registry, enf.Parameters.AquaEnforcerImage.Repository, enf.Parameters.AquaEnforcerImage.Tag),
-							ImagePullPolicy: corev1.PullPolicy(enf.Parameters.AquaEnforcerImage.PullPolicy),
+							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							VolumeMounts: []corev1.VolumeMount{
 								{
 									Name:      "var-run",
@@ -156,6 +140,10 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 									Name:      "aquasec-audit",
 									MountPath: "/opt/aquasec/audit",
 								},
+								{
+									Name:      "aquasec-data",
+									MountPath: "/data",
+								},
 							},
 							Env: []corev1.EnvVar{
 								{
@@ -163,9 +151,9 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 									ValueFrom: &corev1.EnvVarSource{
 										SecretKeyRef: &corev1.SecretKeySelector{
 											LocalObjectReference: corev1.LocalObjectReference{
-												Name: enf.Parameters.AquaEnforcerTokenSecretName,
+												Name: cr.Spec.Secret.Name,
 											},
-											Key: "token",
+											Key: cr.Spec.Secret.Key,
 										},
 									},
 								},
@@ -178,16 +166,12 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 									Value: "/var/lib/aquasec",
 								},
 								{
-									Name:  "AQUA_LOGICAL_NAME",
-									Value: fmt.Sprintf("%s-operator", cr.Name),
+									Name:  "AQUA_GRPC_ONLY_MODE",
+									Value: "true",
 								},
 								{
 									Name:  "RESTART_CONTAINERS",
 									Value: "no",
-								},
-								{
-									Name:  "SENDING_HOST_IMAGES_DISABLED",
-									Value: strconv.FormatBool(cr.Spec.SendingHostImages),
 								},
 							},
 						},
@@ -257,6 +241,14 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 								},
 							},
 						},
+						{
+							Name: "aquasec-data",
+							VolumeSource: corev1.VolumeSource{
+								HostPath: &corev1.HostPathVolumeSource{
+									Path: "/var/lib/aquasec/data",
+								},
+							},
+						},
 					},
 				},
 			},
@@ -303,6 +295,14 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 					"SYSLOG",
 					"SYS_CHROOT",
 				},
+			},
+		}
+	}
+
+	if len(cr.Spec.Common.ImagePullSecret) != 0 {
+		ds.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+			corev1.LocalObjectReference{
+				Name: cr.Spec.Common.ImagePullSecret,
 			},
 		}
 	}

@@ -2,10 +2,18 @@ package aquaserver
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
-	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
+	syserrors "errors"
+
 	"github.com/niso120b/aqua-operator/pkg/controller/common"
+
+	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s"
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/pvcs"
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/secrets"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -91,6 +99,14 @@ func add(mgr manager.Manager, r reconcile.Reconciler) error {
 		return err
 	}
 
+	err = c.Watch(&source.Kind{Type: &corev1.PersistentVolumeClaim{}}, &handler.EnqueueRequestForOwner{
+		IsController: true,
+		OwnerType:    &operatorv1alpha1.AquaDatabase{},
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -129,52 +145,55 @@ func (r *ReconcileAquaServer) Reconcile(request reconcile.Request) (reconcile.Re
 		return reconcile.Result{}, err
 	}
 
-	if instance.Spec.Requirements {
-		reqLogger.Info("Start Setup Requirment For Aqua Server")
-
-		if len(instance.Spec.RegistryData.ImagePullSecretName) == 0 {
-			_, err = r.CreateImagePullSecret(instance)
-			if err != nil {
-				return reconcile.Result{}, err
-			}
-		}
-
-		_, err = r.CreateAquaServiceAccount(instance)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		reqLogger.Info("Start Setup Secret For Database Password")
-		_, err = r.CreateDbPasswordSecret(instance)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-	}
+	instance = r.updateServerObject(instance)
 
 	if instance.Spec.ServerService != nil {
-		if instance.Spec.ServerService.ImageData != nil {
-			reqLogger.Info("Start Setup Aqua Server")
+		reqLogger.Info("Start create the server pvc")
+		_, err = r.CreateServerPvc(instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 
-			// If only need to add server to existing service then Add is true
-			// and if false then not creating extra service
-			if !instance.Spec.Add {
-				_, err = r.InstallServerService(instance)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-			}
+		reqLogger.Info("Start Setup Aqua Server")
+		_, err = r.InstallServerService(instance)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
 
-			if len(instance.Spec.LicenseToken) > 0 || len(instance.Spec.AdminPassword) > 0 {
-				_, err = r.CreateServerSecrets(instance)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-			}
-
-			_, err = r.InstallServerDeployment(instance)
+		if len(instance.Spec.AdminPassword) > 0 {
+			reqLogger.Info("Start Creating Admin Password Secret")
+			_, err = r.CreateAdminPasswordSecret(instance)
 			if err != nil {
 				return reconcile.Result{}, err
 			}
+		} else {
+			if instance.Spec.Common.AdminPassword != nil {
+				exists := secrets.CheckIfSecretExists(r.client, instance.Spec.Common.AdminPassword.Name, instance.Namespace)
+				if !exists {
+					reqLogger.Error(syserrors.New("Admin password secret that mentioned in common section don't exists"), "Please create first or pass the password")
+				}
+			}
+		}
+
+		if len(instance.Spec.LicenseToken) > 0 {
+			reqLogger.Info("Start Creating License Token Secret")
+			_, err = r.CreateLicenseSecret(instance)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+		} else {
+			if instance.Spec.Common.AquaLicense != nil {
+				exists := secrets.CheckIfSecretExists(r.client, instance.Spec.Common.AquaLicense.Name, instance.Namespace)
+				if !exists {
+					reqLogger.Error(syserrors.New("Aqua license secret that mentioned in common section don't exists"), "Please create first or pass the license")
+				}
+			}
+		}
+
+		reqLogger.Info("Start Creating Aqua Server Deployment...")
+		_, err = r.InstallServerDeployment(instance)
+		if err != nil {
+			return reconcile.Result{}, err
 		}
 	}
 
@@ -184,6 +203,24 @@ func (r *ReconcileAquaServer) Reconcile(request reconcile.Request) (reconcile.Re
 	}
 
 	return reconcile.Result{Requeue: true}, nil
+}
+
+func (r *ReconcileAquaServer) updateServerObject(cr *operatorv1alpha1.AquaServer) *operatorv1alpha1.AquaServer {
+	admin := false
+	license := false
+
+	if len(cr.Spec.AdminPassword) != 0 {
+		admin = true
+	}
+
+	if len(cr.Spec.LicenseToken) != 0 {
+		license = true
+	}
+
+	cr.Spec.Infrastructure = common.UpdateAquaInfrastructure(cr.Spec.Infrastructure, cr.Name, cr.Namespace)
+	cr.Spec.Common = common.UpdateAquaCommon(cr.Spec.Common, cr.Name, admin, license)
+
+	return cr
 }
 
 /*	----------------------------------------------------------------------------------------------------------------
@@ -224,13 +261,18 @@ func (r *ReconcileAquaServer) InstallServerService(cr *operatorv1alpha1.AquaServ
 	return reconcile.Result{Requeue: true}, nil
 }
 
-func (r *ReconcileAquaServer) CreateServerSecrets(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
+func (r *ReconcileAquaServer) CreateAdminPasswordSecret(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
 	reqLogger := log.WithValues("Server Aqua Phase", "Create Server Secrets")
-	reqLogger.Info("Start creating aqua server secrets")
+	reqLogger.Info("Start creating aqua server admin password secret")
 
 	// Define a new Secrets object
-	serverHelper := newAquaServerHelper(cr)
-	secret := serverHelper.newServerSecrets(cr)
+	secret := secrets.CreateSecret(cr.Name,
+		cr.Namespace,
+		fmt.Sprintf("%s-server", cr.Name),
+		"Secret for aqua admin password",
+		cr.Spec.Common.AdminPassword.Name,
+		cr.Spec.Common.AdminPassword.Key,
+		cr.Spec.AdminPassword)
 
 	// Set AquaServer instance as the owner and controller
 	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
@@ -241,7 +283,7 @@ func (r *ReconcileAquaServer) CreateServerSecrets(cr *operatorv1alpha1.AquaServe
 	found := &corev1.Secret{}
 	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Server Secrets", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
+		reqLogger.Info("Creating a New Aqua Server Admin Password Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
 		err = r.client.Create(context.TODO(), secret)
 		if err != nil {
 			return reconcile.Result{}, err
@@ -253,7 +295,45 @@ func (r *ReconcileAquaServer) CreateServerSecrets(cr *operatorv1alpha1.AquaServe
 	}
 
 	// Secrets already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Server Secrets Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
+	reqLogger.Info("Skip reconcile: Aqua Server Admin Password Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
+	return reconcile.Result{Requeue: true}, nil
+}
+
+func (r *ReconcileAquaServer) CreateLicenseSecret(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
+	reqLogger := log.WithValues("Server Aqua Phase", "Create Server Secrets")
+	reqLogger.Info("Start creating aqua server license secret")
+
+	// Define a new Secrets object
+	secret := secrets.CreateSecret(cr.Name,
+		cr.Namespace,
+		fmt.Sprintf("%s-server", cr.Name),
+		"Secret for aqua license token",
+		cr.Spec.Common.AquaLicense.Name,
+		cr.Spec.Common.AquaLicense.Key,
+		cr.Spec.LicenseToken)
+
+	// Set AquaServer instance as the owner and controller
+	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Check if this service already exists
+	found := &corev1.Secret{}
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
+	if err != nil && errors.IsNotFound(err) {
+		reqLogger.Info("Creating a New Aqua Server License Token Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
+		err = r.client.Create(context.TODO(), secret)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+
+		return reconcile.Result{}, nil
+	} else if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	// Secrets already exists - don't requeue
+	reqLogger.Info("Skip reconcile: Aqua Server License Token Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
 	return reconcile.Result{Requeue: true}, nil
 }
 
@@ -309,7 +389,7 @@ func (r *ReconcileAquaServer) InstallServerDeployment(cr *operatorv1alpha1.AquaS
 			reqLogger.Error(err, "Aqua Server: Failed to list pods.", "AquaServer.Namespace", cr.Namespace, "AquaServer.Name", cr.Name)
 			return reconcile.Result{}, err
 		}
-		podNames := common.GetPodNames(podList.Items)
+		podNames := k8s.PodNames(podList.Items)
 
 		// Update status.Nodes if needed
 		if !reflect.DeepEqual(podNames, cr.Status.Nodes) {
@@ -326,30 +406,30 @@ func (r *ReconcileAquaServer) InstallServerDeployment(cr *operatorv1alpha1.AquaS
 	return reconcile.Result{Requeue: true}, nil
 }
 
-/*	----------------------------------------------------------------------------------------------------------------
-							Requirments
-	----------------------------------------------------------------------------------------------------------------
-*/
+func (r *ReconcileAquaServer) CreateServerPvc(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
+	reqLogger := log.WithValues("Server Aqua Phase", "Install Server PersistentVolumeClaim")
+	reqLogger.Info("Start installing aqua server pvc")
 
-func (r *ReconcileAquaServer) CreateImagePullSecret(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Server Requirments Phase", "Create Image Pull Secret")
-	reqLogger.Info("Start creating aqua images pull secret")
+	// Define a new pvc object
+	pvc := pvcs.CreatePersistentVolumeClaim(cr.Name,
+		cr.Namespace,
+		fmt.Sprintf("%s-server", cr.Name),
+		"Persistent Volume Claim for aqua server",
+		fmt.Sprintf(consts.ServerPvcName, cr.Name),
+		cr.Spec.Common.StorageClass,
+		cr.Spec.Common.ServerDiskSize)
 
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewImagePullSecret(cr.Name, cr.Namespace)
-
-	// Set AquaServer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
+	// Set AquaCspKind instance as the owner and controller
+	if err := controllerutil.SetControllerReference(cr, pvc, r.scheme); err != nil {
 		return reconcile.Result{}, err
 	}
 
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
+	// Check if this pvc already exists
+	found := &corev1.PersistentVolumeClaim{}
+	err := r.client.Get(context.TODO(), types.NamespacedName{Name: pvc.Name, Namespace: pvc.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Image Pull Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
+		reqLogger.Info("Creating a New Aqua Server PersistentVolumeClaim", "PersistentVolumeClaim.Namespace", pvc.Namespace, "PersistentVolumeClaim.Name", pvc.Name)
+		err = r.client.Create(context.TODO(), pvc)
 		if err != nil {
 			return reconcile.Result{}, err
 		}
@@ -359,73 +439,7 @@ func (r *ReconcileAquaServer) CreateImagePullSecret(cr *operatorv1alpha1.AquaSer
 		return reconcile.Result{}, err
 	}
 
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Image Pull Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaServer) CreateDbPasswordSecret(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Server Requirments Phase", "Create Db Password Secret")
-	reqLogger.Info("Start creating aqua db password secret")
-
-	// Define a new secret object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	secret := requirementsHelper.NewDbPasswordSecret(cr.Name, cr.Namespace)
-
-	// Set AquaServer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, secret, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this secret already exists
-	found := &corev1.Secret{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: secret.Name, Namespace: secret.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Db Password Secret", "Secret.Namespace", secret.Namespace, "Secret.Name", secret.Name)
-		err = r.client.Create(context.TODO(), secret)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Secret already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Db Password Secret Already Exists", "Secret.Namespace", found.Namespace, "Secret.Name", found.Name)
-	return reconcile.Result{Requeue: true}, nil
-}
-
-func (r *ReconcileAquaServer) CreateAquaServiceAccount(cr *operatorv1alpha1.AquaServer) (reconcile.Result, error) {
-	reqLogger := log.WithValues("Server Requirments Phase", "Create Aqua Service Account")
-	reqLogger.Info("Start creating aqua service account")
-
-	// Define a new service account object
-	requirementsHelper := common.NewAquaRequirementsHelper(cr.Spec.RegistryData, cr.Name)
-	sa := requirementsHelper.NewServiceAccount(cr.Name, cr.Namespace)
-
-	// Set AquaServer instance as the owner and controller
-	if err := controllerutil.SetControllerReference(cr, sa, r.scheme); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Check if this service account already exists
-	found := &corev1.ServiceAccount{}
-	err := r.client.Get(context.TODO(), types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		reqLogger.Info("Creating a New Aqua Service Account", "ServiceAccount.Namespace", sa.Namespace, "ServiceAccount.Name", sa.Name)
-		err = r.client.Create(context.TODO(), sa)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-
-		return reconcile.Result{}, nil
-	} else if err != nil {
-		return reconcile.Result{}, err
-	}
-
-	// Service account already exists - don't requeue
-	reqLogger.Info("Skip reconcile: Aqua Service Account Already Exists", "ServiceAccount.Namespace", found.Namespace, "ServiceAccount.Name", found.Name)
+	// PersistentVolumeClaim already exists - don't requeue
+	reqLogger.Info("Skip reconcile: Aqua Server PersistentVolumeClaim Already Exists", "PersistentVolumeClaim.Namespace", found.Namespace, "PersistentVolumeClaim.Name", found.Name)
 	return reconcile.Result{Requeue: true}, nil
 }

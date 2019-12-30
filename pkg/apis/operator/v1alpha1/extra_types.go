@@ -4,29 +4,44 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
+type AquaInfrastructure struct {
+	ServiceAccount string `json:"serviceAccount,omitempty"`
+	Namespace      string `json:"namespace,omitempty"`
+	Version        string `json:"version,omitempty"`
+	Platform       string `json:"platform,omitempty"`
+	Requirements   bool   `json:"requirements"`
+}
+
+type AquaCommon struct {
+	ClusterMode        bool        `json:"clusterMode"`
+	ActiveActive       bool        `json:"activeActive"`
+	StorageClass       string      `json:"storageclass,omitempty"`
+	CyberCenterAddress string      `json:"cybercenterAddress,omitempty"`
+	ImagePullSecret    string      `json:"imagePullSecret,omitempty"`
+	AdminPassword      *AquaSecret `json:"adminPassword,omitempty"`
+	AquaLicense        *AquaSecret `json:"license,omitempty"`
+	DatabaseSecret     *AquaSecret `json:"databaseSecret,omitempty"`
+	DbDiskSize         int         `json:"dbDiskSize,omitempty"`
+	ServerDiskSize     int         `json:"serverDiskSize,omitempty"`
+}
+
 type AquaDockerRegistry struct {
-	Url                 string `json:"url"`
-	Username            string `json:"username"`
-	Password            string `json:"password"`
-	Email               string `json:"email"`
-	ImagePullSecretName string `json:"imagePullSecret"`
+	URL      string `json:"url"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Email    string `json:"email"`
 }
 
 type AquaDatabaseInformation struct {
-	Name                    string `json:"name"`
-	Host                    string `json:"host"`
-	Port                    int64  `json:"port"`
-	Username                string `json:"username"`
-	Password                string `json:"password"`
-	PasswordSecretName      string `json:"passwordSecretName"`
-	PasswordSecretKey       string `json:"passwordSecretKey"`
-	AuditName               string `json:"auditName"`
-	AuditHost               string `json:"auditHost"`
-	AuditPort               int64  `json:"auditPort"`
-	AuditUsername           string `json:"auditUsername"`
-	AuditPassword           string `json:"auditPassword"`
-	AuditPasswordSecretName string `json:"auditPasswordSecretName"`
-	AuditPasswordSecretKey  string `json:"auditPasswordSecretKey"`
+	Host     string `json:"host"`
+	Port     int64  `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type AquaSecret struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
 }
 
 type AquaImage struct {
@@ -50,13 +65,6 @@ type AquaService struct {
 	Tolerations    []corev1.Toleration          `json:"tolerations,omitempty"`
 }
 
-type AquaRbacSettings struct {
-	Enable     bool   `json:"enable"`
-	RoleRef    string `json:"roleref"`
-	Openshift  bool   `json:"openshift"`
-	Privileged bool   `json:"privileged"`
-}
-
 type AquaGatewayInformation struct {
 	Host string `json:"host"`
 	Port int64  `json:"port"`
@@ -66,23 +74,26 @@ type AquaLogin struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 	Host     string `json:"host"`
-	// PasswordSecretName string `json:"passwordSecretName"`
-	// PasswordSecretKey  string `json:"passwordSecretKey"`
 }
 
 type AquaScannerCliScale struct {
-	Deploy           *AquaService `json:"deploy"`
-	Name             string       `json:"name"`
-	Max              int64        `json:"max"`
-	Min              int64        `json:"min"`
-	ImagesPerScanner int64        `json:"imagesPerScanner"`
+	Max              int64 `json:"max"`
+	Min              int64 `json:"min"`
+	ImagesPerScanner int64 `json:"imagesPerScanner"`
 }
 
 type AquaDeploymentState string
 
 const (
-	AquaDeploymentStatePending     AquaDeploymentState = "Pending"
-	AquaDeploymentStateWaitingDB   AquaDeploymentState = "Waiting For DataBase"
+	// AquaDeploymentStatePending Pending status when start to deploy aqua
+	AquaDeploymentStatePending AquaDeploymentState = "Pending"
+
+	// AquaDeploymentStateWaitingDB After creating aqua database waiting to done
+	AquaDeploymentStateWaitingDB AquaDeploymentState = "Waiting For Aqua Database"
+
+	// AquaDeploymentStateWaitingAqua After creating aqua server and gateway waiting to done
 	AquaDeploymentStateWaitingAqua AquaDeploymentState = "Waiting For Aqua Server and Gateway"
-	AquaDeploymentStateRunning     AquaDeploymentState = "Running"
+
+	// AquaDeploymentStateRunning done
+	AquaDeploymentStateRunning AquaDeploymentState = "Running"
 )

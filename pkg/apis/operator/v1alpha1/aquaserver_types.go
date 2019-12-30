@@ -8,26 +8,13 @@ import (
 
 // AquaServerSpec defines the desired state of AquaServer
 type AquaServerSpec struct {
-	Requirements       bool                `json:"requirements,required"`
-	Add                bool                `json:"add,required"`
-	ServiceAccountName string              `json:"serviceAccount,omitempty"`
-	DbSecretName       string              `json:"dbSecretName,omitempty"`
-	DbSecretKey        string              `json:"dbSecretKey,omitempty"`
-	RegistryData       *AquaDockerRegistry `json:"registry,omitempty"`
+	Infrastructure *AquaInfrastructure `json:"infra"`
+	Common         *AquaCommon         `json:"common"`
 
-	ServerService *AquaService `json:"deploy,required"`
-
-	DbDeploymentName string                   `json:"aquaDb,omitempty"`
-	ExternalDb       *AquaDatabaseInformation `json:"externalDb,omitempty"`
-
-	LicenseToken    string `json:"licenseToken,omitempty"`
-	AdminPassword   string `json:"adminPassword,omitempty"`
-	AquaSslCertPath string `json:"sslCertPath,omitempty"`
-	ClusterMode     bool   `json:"clusterMode,omitempty"`
-	DbSsl           bool   `json:"ssl,omitempty"`
-	DbAuditSsl      bool   `json:"auditSsl,omitempty"`
-	Dockerless      bool   `json:"dockerless,omitempty"`
-	Openshift       bool   `json:"openshift,omitempty"`
+	ServerService *AquaService             `json:"deploy,required"`
+	ExternalDb    *AquaDatabaseInformation `json:"externalDb,omitempty"`
+	LicenseToken  string                   `json:"licenseToken,omitempty"`
+	AdminPassword string                   `json:"adminPassword,omitempty"`
 }
 
 // AquaServerStatus defines the observed state of AquaServer
