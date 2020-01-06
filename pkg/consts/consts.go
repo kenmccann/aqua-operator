@@ -63,7 +63,7 @@ const (
 	DbPvcSize     = 10
 
 	// LatestVersion Latest supported aqua version in operator
-	LatestVersion = "4.5"
+	LatestVersion = "4.6"
 
 	// Privileged use privileged
 	Privileged = true

@@ -6,7 +6,7 @@ spec:
   infra:                                    # Optional: Infrastructure information
     serviceAccount: "aqua-sa"               # Optional: auto generate if requirment is true
     namespace: "aqua"                       # Optional: auto generate if requirment is true
-    version: "4.5"                          # Optional: auto generate if requirment is true to latest version
+    version: "4.6"                          # Optional: auto generate if requirment is true to latest version
     platform: "openshift"                   # Optional: auto generate if requirment is true to openshift
     requirements: true                      # Optional: default is false
   common:
@@ -42,7 +42,7 @@ spec:
     image:                                  # Optional: if not given take the default value and version from infra.version
       repository: "database"                # Optional: if not given take the default value - database
       registry: "registry.aquasec.com"      # Optional: if not given take the default value - registry.aquasec.com
-      tag: "4.5"                            # Optional: if not given take the default value - 4.5 (latest tested version for this operator version)
+      tag: "4.6"                            # Optional: if not given take the default value - 4.6 (latest tested version for this operator version)
       pullPolicy: "IfNotPresent"            # Optional: if not given take the default value - IfNotPresent
   gateway:                                  # Required: information about aqua gateway deployment
     replicas: 1                             # Required: number of replicas
@@ -50,7 +50,7 @@ spec:
     image:                                  # Optional: if not given take the default value and version from infra.version
       repository: "server"                  # Optional: if not given take the default value - gateway
       registry: "registry.aquasec.com"      # Optional: if not given take the default value - registry.aquasec.com
-      tag: "4.5"                            # Optional: if not given take the default value - 4.5 (latest tested version for this operator version)
+      tag: "4.6"                            # Optional: if not given take the default value - 4.6 (latest tested version for this operator version)
       pullPolicy: "IfNotPresent"            # Optional: if not given take the default value - IfNotPresent
   server:                                   # Required: information about aqua server deployment
     replicas: 1                             # Required: number of replicas
@@ -58,14 +58,14 @@ spec:
     image:                                  # Optional: if not given take the default value and version from infra.version
       repository: "server"                  # Optional: if not given take the default value - server
       registry: "registry.aquasec.com"      # Optional: if not given take the default value - registry.aquasec.com
-      tag: "4.5"                            # Optional: if not given take the default value - 4.5 (latest tested version for this operator version)
+      tag: "4.6"                            # Optional: if not given take the default value - 4.6 (latest tested version for this operator version)
       pullPolicy: "IfNotPresent"            # Optional: if not given take the default value - IfNotPresent
   scanner:                                  # Optional: If not given then don't deploy scanner
     replicas: 1                             # Required: number of replicas
     image:                                  # Optional: if not given take the default value and version from infra.version
       repository: "scanner"                 # Optional: if not given take the default value - scanner
       registry: "registry.aquasec.com"      # Optional: if not given take the default value - registry.aquasec.com
-      tag: "4.5"                            # Optional: if not given take the default value - 4.5 (latest tested version for this operator version)
+      tag: "4.6"                            # Optional: if not given take the default value - 4.6 (latest tested version for this operator version)
       pullPolicy: "IfNotPresent"            # Optional: if not given take the default value - IfNotPresent
   scale:                                    # Optional: Scale settings for aqua scanners
     max: 5                                  # Max number of scanners
