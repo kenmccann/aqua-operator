@@ -44,11 +44,14 @@ func CreateServiceAccount(cr, namespace, app, name, pullImageSecret string) *cor
 			Labels:      labels,
 			Annotations: annotations,
 		},
-		ImagePullSecrets: []corev1.LocalObjectReference{
+	}
+
+	if len(pullImageSecret) > 0 {
+		sa.ImagePullSecrets = []corev1.LocalObjectReference{
 			corev1.LocalObjectReference{
 				Name: pullImageSecret,
 			},
-		},
+		}
 	}
 
 	return sa

@@ -2,6 +2,7 @@ package aquaserver
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/niso120b/aqua-operator/pkg/utils/k8s/services"
 
@@ -36,6 +37,11 @@ func newAquaServerHelper(cr *operatorv1alpha1.AquaServer) *AquaServerHelper {
 
 func (sr *AquaServerHelper) newDeployment(cr *operatorv1alpha1.AquaServer) *appsv1.Deployment {
 	pullPolicy, registry, repository, tag := extra.GetImageData("server", cr.Spec.Infrastructure.Version, cr.Spec.ServerService.ImageData)
+
+	image := os.Getenv("RELATED_IMAGE_SERVER")
+	if image == "" {
+		image = fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+	}
 
 	labels := map[string]string{
 		"app":                cr.Name + "-server",
@@ -72,7 +78,7 @@ func (sr *AquaServerHelper) newDeployment(cr *operatorv1alpha1.AquaServer) *apps
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-server",
-							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Ports: []corev1.ContainerPort{
 								{

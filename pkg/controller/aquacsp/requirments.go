@@ -98,6 +98,14 @@ func (r *ReconcileAquaCsp) CreateAquaServiceAccount(cr *operatorv1alpha1.AquaCsp
 	reqLogger := log.WithValues("Csp Requirments Phase", "Create Aqua Service Account")
 	reqLogger.Info("Start creating aqua service account")
 
+	if len(cr.Spec.Common.ImagePullSecret) > 0 {
+		foundSecret := &corev1.Secret{}
+		err := r.client.Get(context.TODO(), types.NamespacedName{Name: cr.Spec.Common.ImagePullSecret, Namespace: cr.Namespace}, foundSecret)
+		if err != nil && errors.IsNotFound(err) {
+			cr.Spec.Common.ImagePullSecret = ""
+		}
+	}
+
 	// Define a new service account object
 	sa := serviceaccounts.CreateServiceAccount(cr.Name,
 		cr.Namespace,

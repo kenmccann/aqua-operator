@@ -2,6 +2,7 @@ package aquascanner
 
 import (
 	"fmt"
+	"os"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
 	"github.com/niso120b/aqua-operator/pkg/consts"
@@ -31,6 +32,11 @@ func newAquaScannerHelper(cr *operatorv1alpha1.AquaScanner) *AquaScannerHelper {
 
 func (as *AquaScannerHelper) newDeployment(cr *operatorv1alpha1.AquaScanner) *appsv1.Deployment {
 	pullPolicy, registry, repository, tag := extra.GetImageData("scanner", cr.Spec.Infrastructure.Version, cr.Spec.ScannerService.ImageData)
+
+	image := os.Getenv("RELATED_IMAGE_SCANNER")
+	if image == "" {
+		image = fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+	}
 
 	labels := map[string]string{
 		"app":                cr.Name + "-scanner",
@@ -67,7 +73,7 @@ func (as *AquaScannerHelper) newDeployment(cr *operatorv1alpha1.AquaScanner) *ap
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-scanner",
-							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Args: []string{
 								"daemon",

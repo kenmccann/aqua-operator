@@ -2,6 +2,7 @@ package aquaenforcer
 
 import (
 	"fmt"
+	"os"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
 	"github.com/niso120b/aqua-operator/pkg/consts"
@@ -67,6 +68,11 @@ func (enf *AquaEnforcerHelper) CreateTokenSecret(cr *operatorv1alpha1.AquaEnforc
 func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer) *appsv1.DaemonSet {
 	pullPolicy, registry, repository, tag := extra.GetImageData("enforcer", cr.Spec.Infrastructure.Version, cr.Spec.EnforcerService.ImageData)
 
+	image := os.Getenv("RELATED_IMAGE_ENFORCER")
+	if image == "" {
+		image = fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+	}
+
 	labels := map[string]string{
 		"app":                cr.Name + "-requirments",
 		"deployedby":         "aqua-operator",
@@ -101,7 +107,7 @@ func (enf *AquaEnforcerHelper) CreateDaemonSet(cr *operatorv1alpha1.AquaEnforcer
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-enforcer",
-							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							VolumeMounts: []corev1.VolumeMount{
 								{

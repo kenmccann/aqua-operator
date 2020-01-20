@@ -2,6 +2,7 @@ package aquadatabase
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/niso120b/aqua-operator/pkg/utils/k8s/services"
 
@@ -34,6 +35,11 @@ func newAquaDatabaseHelper(cr *operatorv1alpha1.AquaDatabase) *AquaDatabaseHelpe
 
 func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *appsv1.Deployment {
 	pullPolicy, registry, repository, tag := extra.GetImageData("database", cr.Spec.Infrastructure.Version, cr.Spec.DbService.ImageData)
+
+	image := os.Getenv("RELATED_IMAGE_DATABASE")
+	if image == "" {
+		image = fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+	}
 
 	labels := map[string]string{
 		"app":                cr.Name + "-database",
@@ -68,7 +74,7 @@ func (db *AquaDatabaseHelper) newDeployment(cr *operatorv1alpha1.AquaDatabase) *
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-db",
-							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							VolumeMounts: []corev1.VolumeMount{
 								{

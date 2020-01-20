@@ -2,6 +2,7 @@ package aquagateway
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/niso120b/aqua-operator/pkg/controller/common"
 
@@ -36,6 +37,11 @@ func newAquaGatewayHelper(cr *operatorv1alpha1.AquaGateway) *AquaGatewayHelper {
 
 func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *appsv1.Deployment {
 	pullPolicy, registry, repository, tag := extra.GetImageData("gateway", cr.Spec.Infrastructure.Version, cr.Spec.GatewayService.ImageData)
+
+	image := os.Getenv("RELATED_IMAGE_GATEWAY")
+	if image == "" {
+		image = fmt.Sprintf("%s/%s:%s", registry, repository, tag)
+	}
 
 	labels := map[string]string{
 		"app":                cr.Name + "-gateway",
@@ -72,7 +78,7 @@ func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *ap
 					Containers: []corev1.Container{
 						{
 							Name:            "aqua-gateway",
-							Image:           fmt.Sprintf("%s/%s:%s", registry, repository, tag),
+							Image:           image,
 							ImagePullPolicy: corev1.PullPolicy(pullPolicy),
 							Ports: []corev1.ContainerPort{
 								{
