@@ -310,7 +310,7 @@ func (r *ReconcileAquaCsp) updateCspObject(cr *operatorv1alpha1.AquaCsp) *operat
 	if cr.Spec.ServerService == nil {
 		cr.Spec.ServerService = &operatorv1alpha1.AquaService{
 			Replicas:    1,
-			ServiceType: "LoadBalancer",
+			ServiceType: "ClusterIP",
 		}
 	}
 
