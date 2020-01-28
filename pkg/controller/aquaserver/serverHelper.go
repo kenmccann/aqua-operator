@@ -88,10 +88,6 @@ func (sr *AquaServerHelper) newDeployment(cr *operatorv1alpha1.AquaServer) *apps
 							},
 							VolumeMounts: []corev1.VolumeMount{
 								{
-									Name:      "docker-socket-mount",
-									MountPath: "/var/run/docker.sock",
-								},
-								{
 									Name:      "aqua-web-pvc",
 									MountPath: "/opt/aquasec/raw-scan-results",
 								},
@@ -100,14 +96,6 @@ func (sr *AquaServerHelper) newDeployment(cr *operatorv1alpha1.AquaServer) *apps
 						},
 					},
 					Volumes: []corev1.Volume{
-						{
-							Name: "docker-socket-mount",
-							VolumeSource: corev1.VolumeSource{
-								HostPath: &corev1.HostPathVolumeSource{
-									Path: "/var/run/docker.sock",
-								},
-							},
-						},
 						{
 							Name: "aqua-web-pvc",
 							VolumeSource: corev1.VolumeSource{

@@ -113,10 +113,6 @@ func (ctx *AquaEnvsHelper) GetDbEnvVars() ([]corev1.EnvVar, error) {
 			},
 		},
 		{
-			Name:  "SCALOCK_DBSSL",
-			Value: "require",
-		},
-		{
 			Name:  "SCALOCK_AUDIT_DBSSL",
 			Value: "require",
 		},
