@@ -203,10 +203,12 @@ func (r *ReconcileAquaEnforcer) updateEnforcerObject(cr *operatorv1alpha1.AquaEn
 	cr.Spec.Infrastructure = common.UpdateAquaInfrastructure(cr.Spec.Infrastructure, cr.Name, cr.Namespace)
 	cr.Spec.Common = common.UpdateAquaCommon(cr.Spec.Common, cr.Name, false, false)
 
-	if len(cr.Spec.Common.ImagePullSecret) != 0 {
-		exist := secrets.CheckIfSecretExists(r.client, cr.Name, cr.Namespace)
-		if !exist {
-			cr.Spec.Common.ImagePullSecret = consts.EmptyString
+	if cr.Spec.Common != nil {
+		if len(cr.Spec.Common.ImagePullSecret) != 0 {
+			exist := secrets.CheckIfSecretExists(r.client, cr.Name, cr.Namespace)
+			if !exist {
+				cr.Spec.Common.ImagePullSecret = consts.EmptyString
+			}
 		}
 	}
 

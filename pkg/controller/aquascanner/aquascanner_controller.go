@@ -5,7 +5,10 @@ import (
 	"reflect"
 
 	operatorv1alpha1 "github.com/niso120b/aqua-operator/pkg/apis/operator/v1alpha1"
+	"github.com/niso120b/aqua-operator/pkg/consts"
+	"github.com/niso120b/aqua-operator/pkg/controller/common"
 	"github.com/niso120b/aqua-operator/pkg/utils/k8s"
+	"github.com/niso120b/aqua-operator/pkg/utils/k8s/secrets"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -121,6 +124,8 @@ func (r *ReconcileAquaScanner) Reconcile(request reconcile.Request) (reconcile.R
 		return reconcile.Result{}, err
 	}
 
+	instance = r.updateScannerObject(instance)
+
 	if instance.Spec.ScannerService != nil {
 		_, err = r.InstallScannerDeployment(instance)
 		if err != nil {
@@ -134,6 +139,27 @@ func (r *ReconcileAquaScanner) Reconcile(request reconcile.Request) (reconcile.R
 	}
 
 	return reconcile.Result{Requeue: true}, nil
+}
+
+func (r *ReconcileAquaScanner) updateScannerObject(cr *operatorv1alpha1.AquaScanner) *operatorv1alpha1.AquaScanner {
+	version := cr.Spec.Infrastructure.Version
+	if len(version) == 0 {
+		version = consts.LatestVersion
+	}
+
+	cr.Spec.Infrastructure = common.UpdateAquaInfrastructure(cr.Spec.Infrastructure, cr.Name, cr.Namespace)
+	cr.Spec.Common = common.UpdateAquaCommon(cr.Spec.Common, cr.Name, false, false)
+
+	if cr.Spec.Common != nil {
+		if len(cr.Spec.Common.ImagePullSecret) != 0 {
+			exist := secrets.CheckIfSecretExists(r.client, cr.Name, cr.Namespace)
+			if !exist {
+				cr.Spec.Common.ImagePullSecret = consts.EmptyString
+			}
+		}
+	}
+
+	return cr
 }
 
 func (r *ReconcileAquaScanner) InstallScannerDeployment(cr *operatorv1alpha1.AquaScanner) (reconcile.Result, error) {

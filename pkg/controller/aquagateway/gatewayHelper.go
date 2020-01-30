@@ -122,11 +122,13 @@ func (gw *AquaGatewayHelper) newDeployment(cr *operatorv1alpha1.AquaGateway) *ap
 		}
 	}
 
-	if len(cr.Spec.Common.ImagePullSecret) != 0 {
-		deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
-			corev1.LocalObjectReference{
-				Name: cr.Spec.Common.ImagePullSecret,
-			},
+	if cr.Spec.Common != nil {
+		if len(cr.Spec.Common.ImagePullSecret) != 0 {
+			deployment.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{
+				corev1.LocalObjectReference{
+					Name: cr.Spec.Common.ImagePullSecret,
+				},
+			}
 		}
 	}
 
