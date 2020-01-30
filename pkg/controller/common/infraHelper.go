@@ -67,6 +67,10 @@ func UpdateAquaCommon(common *operatorv1alpha1.AquaCommon, name string, admin bo
 				Key:  consts.ScalockDbPasswordSecretKey,
 			}
 		}
+
+		if common.ServerDiskSize == 0 {
+			common.ServerDiskSize = consts.ServerPvcSize
+		}
 	} else {
 		adminPassword := (*operatorv1alpha1.AquaSecret)(nil)
 		aquaLicense := (*operatorv1alpha1.AquaSecret)(nil)
