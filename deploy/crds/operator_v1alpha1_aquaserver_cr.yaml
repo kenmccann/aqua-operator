@@ -1,7 +1,7 @@
 apiVersion: operator.aquasec.com/v1alpha1
 kind: AquaServer
 metadata:
-  name: aquq
+  name: aqua
 spec:
   infra:                                    # Optional: Infrastructure information
     serviceAccount: "aqua-sa"               # Optional: auto generate if requirment is true
