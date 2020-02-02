@@ -1,0 +1,159 @@
+apiVersion: operators.coreos.com/v1alpha1
+kind: ClusterServiceVersion
+metadata:
+  annotations:
+    alm-examples: '[{"apiVersion":"operator.aquasec.com/v1alpha1","kind":"AquaEnforcer","metadata":{"name":"aqua"},"spec":{"common":{"imagePullSecret":null},"deploy":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"enforcer","tag":"4.6"}},"gateway":{"host":"aqua-gateway","port":8443},"infra":{"serviceAccount":"aqua-sa","version":"4.6"},"secret":{"key":null,"name":null},"token":"token"}},{"apiVersion":"operator.aquasec.com/v1alpha1","kind":"AquaGateway","metadata":{"name":"aqua"},"spec":{"common":{"databaseSecret":{"key":null,"name":null},"imagePullSecret":null},"deploy":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"gateway","tag":"4.6"},"replicas":1,"service":"ClusterIP"},"externalDb":{"host":null,"password":null,"port":null,"username":null},"infra":{"platform":"openshift","serviceAccount":"aqua-sa","version":"4.6"}}},{"apiVersion":"operator.aquasec.com/v1alpha1","kind":"AquaScanner","metadata":{"name":"aqua"},"spec":{"common":{"imagePullSecret":null},"deploy":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"scanner","tag":"4.6"},"replicas":1},"infra":{"platform":"openshift","serviceAccount":"aqua-sa","version":"4.6"},"login":{"host":null,"password":null,"username":null}}},{"apiVersion":"operator.aquasec.com/v1alpha1","kind":"AquaServer","metadata":{"name":"aqua"},"spec":{"adminPassword":null,"common":{"activeActive":false,"adminPassword":{"key":null,"name":null},"clusterMode":false,"cybercenterAddress":null,"databaseSecret":{"key":null,"name":null},"imagePullSecret":null,"license":{"key":null,"name":null},"serverDiskSize":null,"storageclass":"default"},"deploy":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"server","tag":"4.6"},"replicas":1,"service":"LoadBalancer"},"externalDb":{"host":null,"password":null,"port":null,"username":null},"infra":{"namespace":"aqua","platform":"openshift","serviceAccount":"aqua-sa","version":"4.6"},"licenseToken":null}},{"apiVersion":"operator.aquasec.com/v1alpha1","kind":"AquaCsp","metadata":{"name":"aqua"},"spec":{"adminPassword":null,"common":{"activeActive":false,"adminPassword":{"key":null,"name":null},"clusterMode":false,"cybercenterAddress":null,"databaseSecret":{"key":null,"name":null},"dbDiskSize":null,"imagePullSecret":null,"license":{"key":null,"name":null},"serverDiskSize":null,"storageclass":"default"},"database":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"database","tag":"4.6"},"replicas":1,"service":"ClusterIP"},"externalDb":{"host":null,"password":null,"port":null,"username":null},"gateway":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"server","tag":"4.6"},"replicas":1,"service":"ClusterIP"},"infra":{"namespace":"aqua","platform":"openshift","requirements":true,"serviceAccount":"aqua-sa","version":"4.6"},"licenseToken":null,"registry":{"email":"example@company.com","password":"","url":"registry.aquasec.com","username":"example@company.com"},"scale":{"imagesPerScanner":200,"max":5,"min":1},"scanner":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"scanner","tag":"4.6"},"replicas":1},"server":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"server","tag":"4.6"},"replicas":1,"service":"LoadBalancer"}}},{"apiVersion":"operator.aquasec.com/v1alpha1","kind":"AquaDatabase","metadata":{"name":"aqua"},"spec":{"common":{"databaseSecret":{"key":null,"name":null},"imagePullSecret":null,"storageclass":"default"},"deploy":{"image":{"pullPolicy":"IfNotPresent","registry":"registry.aquasec.com","repository":"database","tag":"4.6"},"replicas":1,"service":"ClusterIP"},"diskSize":10,"infra":{"serviceAccount":"aqua-sa","version":"4.6"}}}]'
+    capabilities: Basic Install
+  name: aqua-operator.v1.0.0
+  namespace: placeholder
+spec:
+  apiservicedefinitions: {}
+  customresourcedefinitions:
+    owned:
+    - kind: AquaCsp
+      name: aquacsps.operator.aquasec.com
+      version: v1alpha1
+    - kind: AquaDatabase
+      name: aquadatabases.operator.aquasec.com
+      version: v1alpha1
+    - kind: AquaEnforcer
+      name: aquaenforcers.operator.aquasec.com
+      version: v1alpha1
+    - kind: AquaGateway
+      name: aquagateways.operator.aquasec.com
+      version: v1alpha1
+    - kind: AquaScanner
+      name: aquascanners.operator.aquasec.com
+      version: v1alpha1
+    - kind: AquaServer
+      name: aquaservers.operator.aquasec.com
+      version: v1alpha1
+  description: Placeholder description
+  displayName: Aqua Operator
+  install:
+    spec:
+      clusterPermissions:
+      - rules:
+        - apiGroups:
+          - ""
+          resources:
+          - pods
+          - services
+          - endpoints
+          - persistentvolumeclaims
+          - events
+          - configmaps
+          - secrets
+          - serviceaccounts
+          - nodes
+          verbs:
+          - '*'
+        - apiGroups:
+          - ""
+          resources:
+          - namespaces
+          verbs:
+          - get
+        - apiGroups:
+          - apps
+          - extensions
+          resources:
+          - '*'
+          - deployments
+          - daemonsets
+          - replicasets
+          - statefulsets
+          - podsecuritypolicies
+          verbs:
+          - '*'
+        - apiGroups:
+          - monitoring.coreos.com
+          resources:
+          - servicemonitors
+          verbs:
+          - get
+          - create
+        - apiGroups:
+          - operator.aquasec.com
+          resources:
+          - '*'
+          - aquagateways
+          - aquaservers
+          - aquacsps
+          - aquaenforcers
+          - aquascanners
+          verbs:
+          - '*'
+        - apiGroups:
+          - rbac.authorization.k8s.io
+          - authorization.k8s.io
+          resources:
+          - '*'
+          - clusterroles
+          - clusterrolebindings
+          verbs:
+          - '*'
+        - apiGroups:
+          - policy
+          resources:
+          - '*'
+          - podsecuritypolicies
+          verbs:
+          - '*'
+        serviceAccountName: aqua-operator
+      deployments:
+      - name: aqua-operator
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              name: aqua-operator
+          strategy: {}
+          template:
+            metadata:
+              labels:
+                name: aqua-operator
+            spec:
+              containers:
+              - command:
+                - aqua-operator
+                env:
+                - name: WATCH_NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.annotations['olm.targetNamespaces']
+                - name: POD_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.name
+                - name: OPERATOR_NAME
+                  value: aqua-operator
+                image: aquasec/aqua-operator:1.0.0
+                imagePullPolicy: Always
+                name: aqua-operator
+                ports:
+                - containerPort: 60000
+                  name: metrics
+                readinessProbe:
+                  exec:
+                    command:
+                    - stat
+                    - /tmp/operator-sdk-ready
+                  failureThreshold: 1
+                  initialDelaySeconds: 4
+                  periodSeconds: 10
+                resources: {}
+              serviceAccountName: aqua-operator
+    strategy: deployment
+  installModes:
+  - supported: true
+    type: OwnNamespace
+  - supported: true
+    type: SingleNamespace
+  - supported: false
+    type: MultiNamespace
+  - supported: true
+    type: AllNamespaces
+  maturity: alpha
+  provider: {}
+  version: 1.0.0

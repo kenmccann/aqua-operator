@@ -6,7 +6,7 @@ kubectl delete -f  deploy/crds/operator_v1alpha1_aquacsp_crd.yaml
 kubectl delete -f  deploy/crds/operator_v1alpha1_aquascanner_crd.yaml
 
 kubectl delete -f deploy/service_account.yaml -n aqua
-kubectl delete -f deploy/clusterrole.yaml
-kubectl delete -f deploy/clusterrole_binding.yaml
+kubectl delete -f deploy/role.yaml
+kubectl delete -f deploy/role_binding.yaml
 kubectl delete -f deploy/operator.yaml -n aqua
 kubectl delete ns aqua
