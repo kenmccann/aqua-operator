@@ -22,7 +22,7 @@ kubectl create -f  deploy/crds/operator_v1alpha1_aquacsp_crd.yaml
 kubectl create -f  deploy/crds/operator_v1alpha1_aquascanner_crd.yaml
 ```
 
-Install operator with version in the [Operator YAML](deploy/operator.yaml)
+Install operator with version in the [Operator YAML](https://github.com/aquasecurity/aqua-operator/blob/master/deploy/operator.yaml)
 
 ```shell
 kubectl create -f deploy/service_account.yaml -n <namespace>
